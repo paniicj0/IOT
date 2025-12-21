@@ -2,5 +2,7 @@
   "DS1": { "simulated": true, "pin": 5, "pull": "UP" },
   "DPIR1": { "simulated": true, "pin": 6 },
   "DMS": { "simulated": true, "pin": 13, "pull": "UP" },
-  "DUS1": { "simulated": true, "trigger_pin": 23, "echo_pin": 24 }
+  "DUS1": { "simulated": true, "trigger_pin": 23, "echo_pin": 24 },
+  "DL": { "simulated": true, "pin": 18 },
+  "DB": { "simulated": true, "pin": 19 }  
 }

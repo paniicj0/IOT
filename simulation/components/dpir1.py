@@ -11,7 +11,7 @@ def dpir1_callback(motion, code):
     print(f"Motion: {motion}")
 
 def run_dpir1(settings, threads, stop_event):
-    delay = 1
+    delay = 2
     if settings["simulated"]:
         print("Starting DPIR1 simulator")
         th = threading.Thread(target=run_dpir1_simulator, args=(delay, dpir1_callback, stop_event))

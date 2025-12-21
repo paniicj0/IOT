@@ -11,7 +11,7 @@ def dms_callback(pressed, code):
     print(f"Pressed: {pressed}")
 
 def run_dms(settings, threads, stop_event):
-    delay = 1
+    delay = 2
     if settings["simulated"]:
         print("Starting DMS simulator")
         th = threading.Thread(target=run_dms_simulator, args=(delay, dms_callback, stop_event))

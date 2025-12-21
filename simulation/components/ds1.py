@@ -11,7 +11,7 @@ def ds1_callback(pressed, code):
     print(f"Pressed: {pressed}")
 
 def run_ds1(settings, threads, stop_event):
-    delay = 1
+    delay = 2
     if settings["simulated"]:
         print("Starting DS1 simulator")
         th = threading.Thread(target=run_ds1_simulator, args=(delay, ds1_callback, stop_event))
