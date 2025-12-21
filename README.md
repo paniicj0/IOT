@@ -134,7 +134,7 @@ Default pin assignments:
 ## Authors
 
 - **[teodora525](https://github.com/teodora525)** - Teodora Nikolic
-- **paniicj0** - Jovana Panic
+- **[paniicj0](https://github.com/paniicj0)** - Jovana Panic
 
 ## Contributing
 
