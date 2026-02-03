@@ -100,6 +100,14 @@ cd IOT
 pip install RPi.GPIO paho-mqtt influxdb-client flask
 ```
 
+**Note**: For production use, consider creating a `requirements.txt` file with pinned versions:
+```
+RPi.GPIO>=0.7.0
+paho-mqtt>=1.6.1
+influxdb-client>=1.36.0
+flask>=2.3.0
+```
+
 ### 3. Set Up Infrastructure (Docker)
 
 The infrastructure includes MQTT broker, InfluxDB, and Grafana:
@@ -124,8 +132,12 @@ After starting the infrastructure, configure InfluxDB:
 
 1. Access InfluxDB UI at http://localhost:8086
 2. Log in with credentials from `.env`
-3. Create a bucket named `ftn-iot` (or use the one specified in `server/config.json`)
-4. Generate an API token and update it in `server/config.json`
+3. Create a new bucket named `ftn-iot` (or use a different name and update `server/config.json` accordingly)
+   - Navigate to Data > Buckets > Create Bucket
+4. Generate an API token:
+   - Navigate to Data > API Tokens > Generate API Token
+   - Select "All Access API Token" or create a custom token with read/write access to your bucket
+   - Copy the generated token and update it in `server/config.json` under `influx.token`
 
 ### 5. For LCD Functionality
 
@@ -207,7 +219,7 @@ Configure the Flask server and connections:
 }
 ```
 
-Update the `token` field with your InfluxDB API token.
+Update the `token` field with your InfluxDB API token (generated in Installation step 4).
 
 ## Usage
 
