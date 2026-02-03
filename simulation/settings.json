@@ -4,7 +4,8 @@
   "mqtt": {
     "host": "localhost",
     "port": 1883,
-    "topic_sensors": "iot/pi1/sensors"
+    "topic_sensors": "iot/pi1/sensors",
+    "topic_actuators": "iot/pi1/actuators"
   },
 
   "batch": { "size": 10, "interval_sec": 5 },

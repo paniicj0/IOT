@@ -1,0 +1,10 @@
+{
+
+    "mqtt": { "host": "localhost", "port": 1883, "topic": "iot/pi1/sensors", "topic_actuators": "iot/pi1/actuators" },
+    "influx": {
+      "url": "http://localhost:8086",
+      "token": "pcQ_Izy5tZTkgLnBBeyDMOsfUKhUHud43X3wAjscGmouFKlD8mmlfpzckF9CbnHKPjiRTRTiey7sU5QOSmG_FA==",
+      "org": "FTN",
+      "bucket": "ftn-iot"
+    }
+  }
