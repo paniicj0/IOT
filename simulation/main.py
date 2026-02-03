@@ -15,6 +15,7 @@ from mqtt_client import MqttPublisher
 from batch_sender import start_batch_sender_daemon
 
 from datetime import datetime
+from mqtt_actuator_listener import start_actuator_listener
 
 try:
     import RPi.GPIO as GPIO
@@ -62,6 +63,18 @@ if __name__ == "__main__":
         # aktuatori kao i pre
         light_on, light_off = create_door_light(settings["DL"])
         buzzer_on, buzzer_off = create_buzzer(settings["DB"])
+
+
+        act_t = start_actuator_listener(
+            settings["mqtt"]["host"],
+            settings["mqtt"]["port"],
+            settings["mqtt"]["topic_actuators"],
+            light_on, light_off,
+            buzzer_on, buzzer_off,
+            stop_event
+        )
+        threads.append(act_t)
+
 
         actuator_menu(light_on, light_off, buzzer_on, buzzer_off)
 
