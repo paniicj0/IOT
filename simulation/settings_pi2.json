@@ -1,0 +1,23 @@
+{
+  "device": { "pi_id": "PI2", "device_name": "KitchenModule" },
+
+  "mqtt": {
+    "host": "localhost",
+    "port": 1883,
+    "topic_sensors": "iot/pi2/sensors",
+    "topic_actuators": "iot/pi2/actuators"
+  },
+
+  "batch": { "size": 10, "interval_sec": 5 },
+
+  "DS2":   { "simulated": true, "pin": 17, "pull": "UP" },
+  "DPIR2": { "simulated": true, "pin": 27 },
+  "DUS2":  { "simulated": true, "trigger_pin": 22, "echo_pin": 23 },
+
+  "DHT3":  { "simulated": true, "pin": 4 },
+
+  "BTN":   { "simulated": true, "pin": 25, "pull": "UP" },
+  "4SD":   { "simulated": true },
+
+  "GSG":   { "simulated": true }
+}
