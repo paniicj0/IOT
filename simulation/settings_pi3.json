@@ -1,0 +1,23 @@
+{
+  "device": { "pi_id": "PI3", "device_name": "LivingBedroomModule" },
+
+  "mqtt": {
+    "host": "localhost",
+    "port": 1883,
+    "topic_sensors": "iot/pi3/sensors",
+    "topic_actuators": "iot/pi3/actuators"
+  },
+
+  "batch": { "size": 10, "interval_sec": 5 },
+
+  "DHT1":  { "simulated": true, "pin": 16 },
+  "DHT2":  { "simulated": true, "pin": 20 },
+
+  "DPIR3": { "simulated": true, "pin": 21 },
+
+  "IR":    { "simulated": true, "pin": 12 },
+
+  "BRGB":  { "simulated": true, "pins": { "r": 18, "g": 23, "b": 24 } },
+
+  "LCD":   { "simulated": true }
+}

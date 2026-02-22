@@ -2,28 +2,101 @@ import json
 import threading
 import paho.mqtt.client as mqtt
 
-def start_actuator_listener(host, port, topic, light_on, light_off, buzzer_on, buzzer_off, stop_event):
+
+def start_actuator_listener(
+    host,
+    port,
+    topic,
+    light_on,
+    light_off,
+    buzzer_on,
+    buzzer_off,
+    stop_event,
+    *,
+    pi_label="PI",
+    # 4SD callbacks (opciono)
+    set_4sd=None,
+    add_4sd=None,
+    blink_4sd=None,
+    stop_blink_4sd=None
+):
+    def log(*args):
+        print(f"[{pi_label}]", *args)
+
     def on_connect(client, userdata, flags, rc):
-        print("[PI1] actuator mqtt connected rc=", rc)
+        log("actuator mqtt connected rc=", rc)
         client.subscribe(topic)
-        print("[PI1] subscribed to", topic)
+        log("subscribed to", topic)
 
     def on_message(client, userdata, msg):
         try:
             payload = msg.payload.decode("utf-8")
             cmd = json.loads(payload)
 
-            device = cmd.get("device")   # "DL" ili "DB"
-            action = cmd.get("action")   # "on" ili "off"
+            device = cmd.get("device")   # "DL", "DB", "4SD"
+            action = cmd.get("action")   # "on/off", "set/add/blink/stop_blink"
 
+            # ---- DOOR LIGHT ----
             if device == "DL":
-                (light_on if action == "on" else light_off)()
-                print("[PI1] Door light:", action)
-            elif device == "DB":
-                (buzzer_on if action == "on" else buzzer_off)()
-                print("[PI1] Buzzer:", action)
+                if action == "on":
+                    light_on()
+                elif action == "off":
+                    light_off()
+                log("Door light:", action)
+                return
+
+            # ---- BUZZER ----
+            if device == "DB":
+                if action == "on":
+                    buzzer_on()
+                elif action == "off":
+                    buzzer_off()
+                log("Buzzer:", action)
+                return
+
+            # ---- 4SD DISPLAY TIMER ----
+            if device == "4SD":
+                if action == "set":
+                    if set_4sd is None:
+                        log("4SD set ignored (not configured)")
+                        return
+                    seconds = int(cmd.get("seconds", 0))
+                    set_4sd(seconds)
+                    log("4SD set:", seconds)
+                    return
+
+                if action == "add":
+                    if add_4sd is None:
+                        log("4SD add ignored (not configured)")
+                        return
+                    seconds = int(cmd.get("seconds", 0))
+                    add_4sd(seconds)
+                    log("4SD add:", seconds)
+                    return
+
+                if action == "blink":
+                    if blink_4sd is None:
+                        log("4SD blink ignored (not configured)")
+                        return
+                    blink_4sd()
+                    log("4SD blink ON")
+                    return
+
+                if action == "stop_blink":
+                    if stop_blink_4sd is None:
+                        log("4SD stop_blink ignored (not configured)")
+                        return
+                    stop_blink_4sd()
+                    log("4SD blink OFF")
+                    return
+
+                log("Unknown 4SD action:", action)
+                return
+
+            log("Unknown device:", device, "payload:", cmd)
+
         except Exception as e:
-            print("[PI1] actuator cmd error:", e)
+            log("actuator cmd error:", e)
 
     client = mqtt.Client()
     client.on_connect = on_connect
