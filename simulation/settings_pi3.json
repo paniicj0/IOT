@@ -9,6 +9,7 @@
   },
 
   "batch": { "size": 10, "interval_sec": 5 },
+  "security": { "pin_code": "1234" },
 
   "DHT1":  { "simulated": true, "pin": 16 },
   "DHT2":  { "simulated": true, "pin": 20 },
