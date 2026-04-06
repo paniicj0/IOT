@@ -9,6 +9,7 @@
   },
 
   "batch": { "size": 10, "interval_sec": 5 },
+  "security": { "pin_code": "1234" },
 
   "DS1": { "simulated": true, "pin": 5, "pull": "UP" },
   "DPIR1": { "simulated": true, "pin": 6 },
