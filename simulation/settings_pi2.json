@@ -10,6 +10,7 @@
 
   "batch": { "size": 10, "interval_sec": 5 },
   "security": { "pin_code": "1234" },
+  "timer": { "button_add_seconds": 30 },
 
   "DS2":   { "simulated": true, "pin": 17, "pull": "UP" },
   "DPIR2": { "simulated": true, "pin": 27 },

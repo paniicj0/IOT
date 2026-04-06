@@ -14,11 +14,13 @@ def start_actuator_listener(
     stop_event,
     *,
     pi_label="PI",
-    # 4SD callbacks (opciono)
     set_4sd=None,
     add_4sd=None,
     blink_4sd=None,
-    stop_blink_4sd=None
+    stop_blink_4sd=None,
+    rgb_on=None,
+    rgb_off=None,
+    rgb_set_color=None
 ):
     def log(*args):
         print(f"[{pi_label}]", *args)
@@ -33,8 +35,8 @@ def start_actuator_listener(
             payload = msg.payload.decode("utf-8")
             cmd = json.loads(payload)
 
-            device = cmd.get("device")   # "DL", "DB", "4SD"
-            action = cmd.get("action")   # "on/off", "set/add/blink/stop_blink"
+            device = cmd.get("device")
+            action = cmd.get("action")
 
             # ---- DOOR LIGHT ----
             if device == "DL":
@@ -54,7 +56,7 @@ def start_actuator_listener(
                 log("Buzzer:", action)
                 return
 
-            # ---- 4SD DISPLAY TIMER ----
+            # ---- 4SD ----
             if device == "4SD":
                 if action == "set":
                     if set_4sd is None:
@@ -91,6 +93,36 @@ def start_actuator_listener(
                     return
 
                 log("Unknown 4SD action:", action)
+                return
+
+            # ---- BRGB ----
+            if device == "BRGB":
+                if action == "on":
+                    if rgb_on is None:
+                        log("BRGB on ignored (not configured)")
+                        return
+                    rgb_on()
+                    log("BRGB ON")
+                    return
+
+                if action == "off":
+                    if rgb_off is None:
+                        log("BRGB off ignored (not configured)")
+                        return
+                    rgb_off()
+                    log("BRGB OFF")
+                    return
+
+                if action == "set_color":
+                    if rgb_set_color is None:
+                        log("BRGB set_color ignored (not configured)")
+                        return
+                    color = str(cmd.get("color", "WHITE")).upper()
+                    rgb_set_color(color)
+                    log("BRGB COLOR:", color)
+                    return
+
+                log("Unknown BRGB action:", action)
                 return
 
             log("Unknown device:", device, "payload:", cmd)
