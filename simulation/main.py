@@ -19,6 +19,12 @@ from components.btn import run_btn
 from components.gsg import run_gsg
 from components.display_4sd import create_4sd
 
+# PI3 senzori
+from components.dpir3 import run_dpir3
+from components.dht1 import run_dht1
+from components.dht2 import run_dht2
+from components.lcd import create_lcd
+
 # Aktuatori
 from components.door_light import create_door_light
 from components.buzzer import create_buzzer
@@ -78,18 +84,23 @@ def alarm_off(settings, system_state, buzzer_off, reason="PIN_OK"):
         push_alarm_status(settings, False, reason)
 
 
-# --- DS hold detection ---
 ds_state = {
     "DS1": {"pressed": False, "timer": None, "triggered": False},
     "DS2": {"pressed": False, "timer": None, "triggered": False},
 }
 ds_lock = threading.Lock()
 
-# --- DUS state ---
 dus_lock = threading.Lock()
 last_dus_distance = {
     "DUS1": None,
     "DUS2": None,
+}
+
+dht_lock = threading.Lock()
+last_dht_values = {
+    "DHT1": None,
+    "DHT2": None,
+    "DHT3": None,
 }
 
 
@@ -127,7 +138,6 @@ def handle_people_count(sensor_code: str, system_state, settings):
     else:
         before = system_state.get_people_count()
         system_state.remove_person()
-        after = system_state.get_people_count()
         action = "EXIT" if before > 0 else "EXIT_IGNORED"
 
     count = system_state.get_people_count()
@@ -140,6 +150,34 @@ def handle_people_count(sensor_code: str, system_state, settings):
         "distance_cm": distance,
         "count": count
     }, True))
+
+
+def start_lcd_rotation(lcd_write, stop_event):
+    def worker():
+        sensor_order = ["DHT1", "DHT2", "DHT3"]
+        idx = 0
+
+        while not stop_event.is_set():
+            sensor_code = sensor_order[idx % len(sensor_order)]
+
+            with dht_lock:
+                dht_data = last_dht_values.get(sensor_code)
+
+            if dht_data is not None:
+                temp = dht_data["temperature"]
+                hum = dht_data["humidity"]
+
+                line1 = f"{sensor_code} T:{temp:.1f}C"
+                line2 = f"H:{hum:.1f}%"
+                lcd_write(line1, line2)
+
+            idx += 1
+            time.sleep(3)
+
+    import time
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    return t
 
 
 if __name__ == "__main__":
@@ -173,7 +211,40 @@ if __name__ == "__main__":
         if "DB" in settings:
             buzzer_on, buzzer_off = create_buzzer(settings["DB"])
 
-        # ---------------- DS1 ----------------
+        set_4sd = add_4sd = blink_4sd = stop_blink_4sd = None
+        if "4SD" in settings:
+            set_4sd, add_4sd, blink_4sd, stop_blink_4sd, run_4sd_loop = create_4sd(settings["4SD"])
+            t4 = threading.Thread(target=run_4sd_loop, args=(stop_event,), daemon=True)
+            t4.start()
+            threads.append(t4)
+
+        lcd_write = lcd_clear = None
+        if "LCD" in settings:
+            lcd_write, lcd_clear, run_lcd_loop = create_lcd(settings["LCD"])
+            tlcd = threading.Thread(target=run_lcd_loop, args=(stop_event,), daemon=True)
+            tlcd.start()
+            threads.append(tlcd)
+
+            rot_t = start_lcd_rotation(lcd_write, stop_event)
+            threads.append(rot_t)
+
+        act_t = start_actuator_listener(
+            settings["mqtt"]["host"],
+            settings["mqtt"]["port"],
+            settings["mqtt"]["topic_actuators"],
+            light_on,
+            light_off,
+            buzzer_on,
+            buzzer_off,
+            stop_event,
+            pi_label=settings["device"]["pi_id"],
+            set_4sd=set_4sd,
+            add_4sd=add_4sd,
+            blink_4sd=blink_4sd,
+            stop_blink_4sd=stop_blink_4sd
+        )
+        threads.append(act_t)
+
         if "DS1" in settings:
             def ds1_handler(v):
                 push(make_record(settings, "DS1", v))
@@ -197,10 +268,10 @@ if __name__ == "__main__":
                         st["pressed"] = False
                         if st["timer"]:
                             st["timer"].cancel()
+                        st["timer"] = None
 
             run_ds1(settings["DS1"], threads, stop_event, on_value=ds1_handler)
 
-        # ---------------- DS2 ----------------
         if "DS2" in settings:
             def ds2_handler(v):
                 push(make_record(settings, "DS2", v))
@@ -217,64 +288,87 @@ if __name__ == "__main__":
 
                     if pressed and not st["pressed"]:
                         st["pressed"] = True
+                        st["triggered"] = False
                         st["timer"] = _start_ds_hold_timer("DS2", stop_event, push_alarm_event)
 
                     elif not pressed and st["pressed"]:
                         st["pressed"] = False
                         if st["timer"]:
                             st["timer"].cancel()
+                        st["timer"] = None
 
             run_ds2(settings["DS2"], threads, stop_event, on_value=ds2_handler)
 
-        # ---------------- DMS ----------------
         if "DMS" in settings:
             def dms_handler(v):
+                push(make_record(settings, "DMS", v))
+
                 if v.get("value") == 1:
-                    pin = input("PIN: ")
+                    pin = input("PIN: ").strip()
 
                     if system_state.check_pin(pin):
+                        print("[DMS] PIN OK")
+
                         if system_state.is_alarm_active():
                             alarm_off(settings, system_state, buzzer_off)
                             system_state.disarm()
-                        else:
-                            print("Arming...")
-                            system_state.arm_pending()
+                            print("[SYSTEM] DISARMED")
+                            return
 
-                            def arm():
-                                if system_state.is_pending_arm():
-                                    system_state.arm_now()
-                                    print("ARMED")
+                        if system_state.is_armed():
+                            system_state.disarm()
+                            print("[SYSTEM] DISARMED")
+                            return
 
-                            threading.Timer(10, arm).start()
+                        if system_state.is_pending_arm():
+                            system_state.disarm()
+                            print("[SYSTEM] ARMING CANCELED")
+                            return
+
+                        print("[SYSTEM] Arming in 10 seconds...")
+                        system_state.arm_pending()
+
+                        def arm():
+                            if system_state.is_pending_arm():
+                                system_state.arm_now()
+                                print("[SYSTEM] ARMED")
+
+                        t = threading.Timer(10, arm)
+                        t.daemon = True
+                        t.start()
+
+                    else:
+                        print("[DMS] WRONG PIN")
 
             run_dms(settings["DMS"], threads, stop_event, on_value=dms_handler)
 
-        # ---------------- GSG ----------------
         if "GSG" in settings:
             def gsg_handler(v):
-                mag = float(v.get("value", 0))
+                push(make_record(settings, "GSG", v))
+                mag = float(v.get("magnitude", v.get("value", 0)))
                 if mag >= 0.7:
                     alarm_on(settings, system_state, buzzer_on, "GSG")
 
             run_gsg(settings["GSG"], threads, stop_event, on_value=gsg_handler)
 
-        # ---------------- DPIR1 ----------------
         if "DPIR1" in settings:
             def dpir1_handler(v):
                 push(make_record(settings, "DPIR1", v))
 
                 if v.get("value") == 1:
                     light_on()
-                    threading.Timer(10, light_off).start()
+
+                    t = threading.Timer(10, light_off)
+                    t.daemon = True
+                    t.start()
 
                     handle_people_count("DUS1", system_state, settings)
 
                     if system_state.get_people_count() == 0:
-                        alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM")
+                        alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS1")
 
             run_dpir1(settings["DPIR1"], threads, stop_event, on_value=dpir1_handler)
 
-        # ---------------- DPIR2 ----------------
         if "DPIR2" in settings:
             def dpir2_handler(v):
                 push(make_record(settings, "DPIR2", v))
@@ -283,31 +377,93 @@ if __name__ == "__main__":
                     handle_people_count("DUS2", system_state, settings)
 
                     if system_state.get_people_count() == 0:
-                        alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM")
+                        alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS2")
 
             run_dpir2(settings["DPIR2"], threads, stop_event, on_value=dpir2_handler)
 
-        # ---------------- DUS1 ----------------
+        if "DPIR3" in settings:
+            def dpir3_handler(v):
+                push(make_record(settings, "DPIR3", v))
+
+                if v.get("value") == 1:
+                    print("[LOGIC] DPIR3 motion detected")
+
+                    if system_state.get_people_count() == 0:
+                        alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DPIR3")
+
+            run_dpir3(settings["DPIR3"], threads, stop_event, on_value=dpir3_handler)
+
         if "DUS1" in settings:
             def dus1_handler(v):
+                push(make_record(settings, "DUS1", v))
                 with dus_lock:
                     last_dus_distance["DUS1"] = float(v.get("distance_cm", v.get("value", 0)))
 
             run_dus1(settings["DUS1"], threads, stop_event, on_value=dus1_handler)
 
-        # ---------------- DUS2 ----------------
         if "DUS2" in settings:
             def dus2_handler(v):
+                push(make_record(settings, "DUS2", v))
                 with dus_lock:
                     last_dus_distance["DUS2"] = float(v.get("distance_cm", v.get("value", 0)))
 
             run_dus2(settings["DUS2"], threads, stop_event, on_value=dus2_handler)
 
-        actuator_menu(light_on, light_off, buzzer_on, buzzer_off)
+        if "DHT1" in settings:
+            def dht1_handler(v):
+                push(make_record(settings, "DHT1", v))
+                with dht_lock:
+                    last_dht_values["DHT1"] = {
+                        "temperature": float(v.get("temperature", v.get("value", 0.0))),
+                        "humidity": float(v.get("humidity", 0.0))
+                    }
+
+            run_dht1(settings["DHT1"], threads, stop_event, on_value=dht1_handler)
+
+        if "DHT2" in settings:
+            def dht2_handler(v):
+                push(make_record(settings, "DHT2", v))
+                with dht_lock:
+                    last_dht_values["DHT2"] = {
+                        "temperature": float(v.get("temperature", v.get("value", 0.0))),
+                        "humidity": float(v.get("humidity", 0.0))
+                    }
+
+            run_dht2(settings["DHT2"], threads, stop_event, on_value=dht2_handler)
+
+        if "DHT3" in settings:
+            def dht3_handler(v):
+                push(make_record(settings, "DHT3", v))
+                with dht_lock:
+                    last_dht_values["DHT3"] = {
+                        "temperature": float(v.get("temperature", v.get("value", 0.0))),
+                        "humidity": float(v.get("humidity", 0.0))
+                    }
+
+            run_dht3(settings["DHT3"], threads, stop_event, on_value=dht3_handler)
+
+        if "BTN" in settings:
+            run_btn(settings["BTN"], threads, stop_event,
+                    on_value=lambda v: push(make_record(settings, "BTN", v)))
+
+        if "DL" in settings or "DB" in settings:
+            actuator_menu(light_on, light_off, buzzer_on, buzzer_off)
+        else:
+            stop_event.wait()
 
     except KeyboardInterrupt:
         print("Stopping...")
 
     finally:
         stop_event.set()
+
+        for t in threads:
+            t.join(timeout=3)
+
         pub.close()
+
+        if GPIO is not None:
+            try:
+                GPIO.cleanup()
+            except:
+                pass
