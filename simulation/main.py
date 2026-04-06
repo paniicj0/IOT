@@ -1,5 +1,6 @@
 import threading
 import sys
+import time
 from datetime import datetime
 
 from settings import load_settings
@@ -24,10 +25,12 @@ from components.dpir3 import run_dpir3
 from components.dht1 import run_dht1
 from components.dht2 import run_dht2
 from components.lcd import create_lcd
+from components.ir import run_ir
 
 # Aktuatori
 from components.door_light import create_door_light
 from components.buzzer import create_buzzer
+from components.brgb import create_brgb
 from actuator_menu import actuator_menu
 
 # Telemetrija + MQTT
@@ -174,10 +177,17 @@ def start_lcd_rotation(lcd_write, stop_event):
             idx += 1
             time.sleep(3)
 
-    import time
     t = threading.Thread(target=worker, daemon=True)
     t.start()
     return t
+
+
+def push_brgb_state(settings, rgb_get_state):
+    if rgb_get_state is None:
+        return
+
+    state = rgb_get_state()
+    push(make_record(settings, "BRGB_STATE", state, simulated_override=True))
 
 
 if __name__ == "__main__":
@@ -186,6 +196,7 @@ if __name__ == "__main__":
     settings = load_settings(settings_path)
 
     system_state = SystemState(settings.get("security", {}).get("pin_code", "1234"))
+    timer_add_seconds = int(settings.get("timer", {}).get("button_add_seconds", 30))
 
     stop_event = threading.Event()
     threads = []
@@ -204,6 +215,8 @@ if __name__ == "__main__":
     try:
         light_on = light_off = lambda: None
         buzzer_on = buzzer_off = lambda: None
+        rgb_on = rgb_off = rgb_set_color = lambda *args, **kwargs: None
+        rgb_get_state = None
 
         if "DL" in settings:
             light_on, light_off = create_door_light(settings["DL"])
@@ -211,9 +224,23 @@ if __name__ == "__main__":
         if "DB" in settings:
             buzzer_on, buzzer_off = create_buzzer(settings["DB"])
 
+        if "BRGB" in settings:
+            rgb_on, rgb_off, rgb_set_color, rgb_get_state = create_brgb(settings["BRGB"])
+
         set_4sd = add_4sd = blink_4sd = stop_blink_4sd = None
+        is_4sd_blinking = get_4sd_seconds = None
+
         if "4SD" in settings:
-            set_4sd, add_4sd, blink_4sd, stop_blink_4sd, run_4sd_loop = create_4sd(settings["4SD"])
+            (
+                set_4sd,
+                add_4sd,
+                blink_4sd,
+                stop_blink_4sd,
+                run_4sd_loop,
+                is_4sd_blinking,
+                get_4sd_seconds
+            ) = create_4sd(settings["4SD"])
+
             t4 = threading.Thread(target=run_4sd_loop, args=(stop_event,), daemon=True)
             t4.start()
             threads.append(t4)
@@ -241,7 +268,10 @@ if __name__ == "__main__":
             set_4sd=set_4sd,
             add_4sd=add_4sd,
             blink_4sd=blink_4sd,
-            stop_blink_4sd=stop_blink_4sd
+            stop_blink_4sd=stop_blink_4sd,
+            rgb_on=rgb_on,
+            rgb_off=rgb_off,
+            rgb_set_color=rgb_set_color
         )
         threads.append(act_t)
 
@@ -443,8 +473,50 @@ if __name__ == "__main__":
             run_dht3(settings["DHT3"], threads, stop_event, on_value=dht3_handler)
 
         if "BTN" in settings:
-            run_btn(settings["BTN"], threads, stop_event,
-                    on_value=lambda v: push(make_record(settings, "BTN", v)))
+            def btn_handler(v):
+                push(make_record(settings, "BTN", v))
+
+                if v.get("value") == 1 and add_4sd is not None:
+                    if is_4sd_blinking is not None and is_4sd_blinking():
+                        stop_blink_4sd()
+                        print("[BTN] Blink stopped")
+                    else:
+                        add_4sd(timer_add_seconds)
+                        print(f"[BTN] Added {timer_add_seconds} seconds")
+
+            run_btn(settings["BTN"], threads, stop_event, on_value=btn_handler)
+
+        if "IR" in settings:
+            def ir_handler(v):
+                push(make_record(settings, "IR", v))
+
+                command = str(v.get("command", v.get("value", ""))).upper()
+
+                if command == "ON":
+                    rgb_on()
+                    push_brgb_state(settings, rgb_get_state)
+                    return
+
+                if command == "OFF":
+                    rgb_off()
+                    push_brgb_state(settings, rgb_get_state)
+                    return
+
+                color_map = {
+                    "RED": "RED",
+                    "GREEN": "GREEN",
+                    "BLUE": "BLUE",
+                    "WHITE": "WHITE",
+                    "YELLOW": "YELLOW",
+                    "PURPLE": "PURPLE"
+                }
+
+                if command in color_map:
+                    rgb_set_color(color_map[command])
+                    push_brgb_state(settings, rgb_get_state)
+                    return
+
+            run_ir(settings["IR"], threads, stop_event, on_value=ir_handler)
 
         if "DL" in settings or "DB" in settings:
             actuator_menu(light_on, light_off, buzzer_on, buzzer_off)
