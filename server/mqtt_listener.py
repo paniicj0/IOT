@@ -1,7 +1,7 @@
 import json
 import paho.mqtt.client as mqtt
 
-def start_mqtt(influx_writer, host, port, topic):
+def start_mqtt(influx_writer, host, port, topic="iot/+/sensors"):
 
     def on_connect(client, userdata, flags, rc):
         print(f"[MQTT] Connected rc={rc}")
@@ -15,13 +15,17 @@ def start_mqtt(influx_writer, host, port, topic):
             batch = json.loads(msg.payload.decode())
             print("[MQTT] decoded type:", type(batch), "len:", (len(batch) if isinstance(batch, list) else "n/a"))
 
-
-            # ako slučajno stigne jedan record
             if isinstance(batch, dict):
                 batch = [batch]
 
             count = 0
             for rec in batch:
+                print(
+                    f"[MQTT] PI={rec.get('pi') or rec.get('pi_id')} | "
+                    f"device={rec.get('device_name')} | "
+                    f"sensor={rec.get('sensor_code') or rec.get('sensor')} | "
+                    f"simulated={rec.get('simulated')}"
+                )
                 influx_writer.write_record(rec)
                 count += 1
 

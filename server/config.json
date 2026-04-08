@@ -1,10 +1,10 @@
 {
 
-    "mqtt": { "host": "localhost", "port": 1883, "topic": "iot/pi1/sensors", "topic_actuators": "iot/pi1/actuators" },
+    "mqtt": { "host": "localhost", "port": 1883, "topic": "iot/+/sensors", "topic_actuators": "iot/pi1/actuators" },
     "influx": {
       "url": "http://localhost:8086",
-      "token": "pcQ_Izy5tZTkgLnBBeyDMOsfUKhUHud43X3wAjscGmouFKlD8mmlfpzckF9CbnHKPjiRTRTiey7sU5QOSmG_FA==",
+      "token": "lP6sdoRAUc57q74BuhBlSzI_6ChLnbv_Iff_YQQ9a87DydbCnYCJ2bhHIEooOrKSZ_yoA8znkiWIF3_9yvIZ7A==",
       "org": "FTN",
-      "bucket": "ftn-iot"
+      "bucket": "telemetry"
     }
   }

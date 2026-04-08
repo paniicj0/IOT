@@ -116,7 +116,7 @@ def mqtt_worker():
         writer,
         host=mqtt_cfg["host"],
         port=mqtt_cfg["port"],
-        topic=mqtt_cfg["topic"]
+        topic="iot/+/sensors"
     )
 
 
