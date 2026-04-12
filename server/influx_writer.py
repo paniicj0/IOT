@@ -2,6 +2,7 @@ from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.write_api import SYNCHRONOUS
 from datetime import datetime, timezone
 
+
 class InfluxWriter:
     def __init__(self, url: str, token: str, org: str, bucket: str):
         self.client = InfluxDBClient(url=url, token=token, org=org)
@@ -9,36 +10,60 @@ class InfluxWriter:
         self.bucket = bucket
         self.org = org
 
-    def write_record(self, rec: dict):
-        ts = rec.get("timestamp")
-
+    def _parse_timestamp(self, ts):
         try:
-            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
+            return dt
         except Exception:
-            dt = datetime.now(timezone.utc)
+            return datetime.now(timezone.utc)
 
-        raw = rec.get("value", 0)
-        if isinstance(raw, dict):
-            raw = raw.get("value", 0)
+    def _add_field_or_tag(self, point: Point, key: str, value):
+        if value is None:
+            return point
 
-        value_num = float(raw)
+        if isinstance(value, bool):
+            return point.field(key, value)
 
-        p = (
+        if key == "value" and isinstance(value, (int, float)) and not isinstance(value, bool):
+            return point.field(key, float(value))
+
+        if isinstance(value, int) and not isinstance(value, bool):
+            return point.field(key, value)
+
+        if isinstance(value, float):
+            return point.field(key, value)
+
+        if isinstance(value, str):
+            return point.tag(key, value)
+
+        return point.tag(key, str(value))
+
+    def write_record(self, rec: dict):
+        dt = self._parse_timestamp(rec.get("timestamp"))
+
+        point = (
             Point("sensor_data")
             .tag("pi_id", str(rec.get("pi_id", "")))
             .tag("device_name", str(rec.get("device_name", "")))
             .tag("sensor", str(rec.get("sensor", "")))
             .tag("simulated", str(rec.get("simulated", False)).lower())
-            .field("value", value_num)
             .time(dt, WritePrecision.NS)
         )
 
-        self.write_api.write(bucket=self.bucket, org=self.org, record=p)
+        raw = rec.get("value", 0)
+
+        if isinstance(raw, dict):
+            for key, value in raw.items():
+                point = self._add_field_or_tag(point, key, value)
+        else:
+            point = self._add_field_or_tag(point, "value", raw)
+
+        self.write_api.write(bucket=self.bucket, org=self.org, record=point)
 
     def close(self):
         try:
             self.client.close()
-        except:
+        except Exception:
             pass

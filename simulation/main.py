@@ -44,8 +44,11 @@ from system_state import SystemState
 try:
     import RPi.GPIO as GPIO
     GPIO.setmode(GPIO.BCM)
-except:
+except Exception:
     GPIO = None
+
+last_disarm_time = 0
+DISARM_COOLDOWN = 10  # sekundi
 
 
 def make_record(settings, sensor_code: str, value, simulated_override=None):
@@ -66,8 +69,13 @@ def make_record(settings, sensor_code: str, value, simulated_override=None):
 
 def push_alarm_status(settings, active: bool, reason: str):
     push(make_record(settings, "ALARM_STATUS", {
-        "active": active,
+        "active": 1 if active else 0,
         "reason": reason
+    }, True))
+
+def push_system_armed_status(settings, armed: bool):
+    push(make_record(settings, "SYSTEM_ARMED", {
+        "armed": 1 if armed else 0
     }, True))
 
 
@@ -105,6 +113,21 @@ last_dht_values = {
     "DHT2": None,
     "DHT3": None,
 }
+
+# ---- prekidač za auto alarm logiku ----
+alarm_logic_enabled = True
+
+
+def enable_alarm_logic():
+    global alarm_logic_enabled
+    alarm_logic_enabled = True
+    print("[ALARM LOGIC] ENABLED")
+
+
+def disable_alarm_logic():
+    global alarm_logic_enabled
+    alarm_logic_enabled = False
+    print("[ALARM LOGIC] DISABLED")
 
 
 def _start_ds_hold_timer(ds_code: str, stop_event, push_event_fn):
@@ -218,6 +241,7 @@ if __name__ == "__main__":
         rgb_on = rgb_off = rgb_set_color = lambda *args, **kwargs: None
         rgb_get_state = None
 
+            # ----- AKTUATORI -----
         if "DL" in settings:
             light_on, light_off = create_door_light(settings["DL"])
 
@@ -227,8 +251,31 @@ if __name__ == "__main__":
         if "BRGB" in settings:
             rgb_on, rgb_off, rgb_set_color, rgb_get_state = create_brgb(settings["BRGB"])
 
+        # ----- 4SD INIT -----
         set_4sd = add_4sd = blink_4sd = stop_blink_4sd = None
         is_4sd_blinking = get_4sd_seconds = None
+
+
+        # ===== INIT STATE SYNC (OVDE!!!) =====
+        push_alarm_status(settings, system_state.is_alarm_active(), "INIT")
+        push_system_armed_status(settings, system_state.is_armed())
+
+        push(make_record(settings, "PEOPLE_COUNT", {
+            "action": "INIT",
+            "source": "SYSTEM",
+            "distance_cm": 0,
+            "count": system_state.get_people_count()
+        }, True))
+
+        if rgb_get_state is not None:
+            push_brgb_state(settings, rgb_get_state)
+
+        if get_4sd_seconds is not None and is_4sd_blinking is not None:
+            push(make_record(settings, "4SD", {
+                "seconds": get_4sd_seconds(),
+                "blinking": is_4sd_blinking()
+            }, True))
+        # =====================================
 
         if "4SD" in settings:
             (
@@ -255,6 +302,93 @@ if __name__ == "__main__":
             rot_t = start_lcd_rotation(lcd_write, stop_event)
             threads.append(rot_t)
 
+        def handle_remote_pin(pin: str):
+            global last_disarm_time
+
+            print(f"######## HANDLE_REMOTE_PIN CALLED pin={pin} ########")
+
+            if not system_state.check_pin(pin):
+                print("[WEB/DMS] WRONG PIN")
+                return
+
+            print("[WEB/DMS] PIN OK")
+
+            # 1) Ako je alarm aktivan -> ugasi alarm i disarmuj sistem
+            if system_state.is_alarm_active():
+                alarm_off(settings, system_state, buzzer_off, "PIN_OK")
+                system_state.disarm()
+                push_system_armed_status(settings, False)
+                last_disarm_time = time.time()
+                print("[SYSTEM] DISARMED")
+                print("[COOLDOWN] Alarm disabled for 10s")
+                return
+
+            # 2) Ako je sistem vec armed -> disarm
+            if system_state.is_armed():
+                system_state.disarm()
+                push_system_armed_status(settings, False)
+                last_disarm_time = time.time()
+                print("[SYSTEM] DISARMED")
+                return
+
+            # 3) Ako je armiranje u toku -> otkazi
+            if system_state.is_pending_arm():
+                system_state.disarm()
+                push_system_armed_status(settings, False)
+                print("[SYSTEM] ARMING CANCELED")
+                return
+
+            # 4) Inace pokreni armiranje za 10 sekundi
+            print("[SYSTEM] Arming in 10 seconds...")
+            system_state.arm_pending()
+
+            def arm():
+                if system_state.is_pending_arm():
+                    system_state.arm_now()
+                    push_system_armed_status(settings, True)
+                    print("[SYSTEM] ARMED")
+
+            t = threading.Timer(10, arm)
+            t.daemon = True
+            t.start()
+
+        def handle_arm_system():
+            print("######## HANDLE_ARM_SYSTEM CALLED ########")
+            print("STATE alarm_active =", system_state.is_alarm_active())
+            print("STATE armed =", system_state.is_armed())
+            print("STATE pending =", system_state.is_pending_arm())
+
+            if system_state.is_alarm_active():
+                print("[ARM] alarm active -> turning OFF first")
+                alarm_off(settings, system_state, buzzer_off, "AUTO_BEFORE_ARM")
+
+            if system_state.is_armed():
+                print("[ARM] already armed")
+                return
+
+            if system_state.is_pending_arm():
+                print("[ARM] already pending")
+                return
+
+            print("[SYSTEM] Arming in 10 seconds...")
+            system_state.arm_pending()
+
+            def arm():
+                if system_state.is_pending_arm():
+                    system_state.arm_now()
+                    enable_alarm_logic()
+                    push_system_armed_status(settings, True)   # <- OVO FALI
+                    print("[SYSTEM] ARMED")
+
+            t = threading.Timer(10, arm)
+            t.daemon = True
+            t.start()
+
+
+
+        def handle_manual_alarm():
+            alarm_on(settings, system_state, buzzer_on, "MANUAL_WEB")
+
         act_t = start_actuator_listener(
             settings["mqtt"]["host"],
             settings["mqtt"]["port"],
@@ -271,7 +405,9 @@ if __name__ == "__main__":
             stop_blink_4sd=stop_blink_4sd,
             rgb_on=rgb_on,
             rgb_off=rgb_off,
-            rgb_set_color=rgb_set_color
+            rgb_set_color=rgb_set_color,
+            on_dms_pin=handle_remote_pin,
+            on_arm_system=handle_arm_system
         )
         threads.append(act_t)
 
@@ -334,44 +470,10 @@ if __name__ == "__main__":
                 push(make_record(settings, "DMS", v))
 
                 if v.get("value") == 1:
-                    pin = input("PIN: ").strip()
-
-                    if system_state.check_pin(pin):
-                        print("[DMS] PIN OK")
-
-                        if system_state.is_alarm_active():
-                            alarm_off(settings, system_state, buzzer_off)
-                            system_state.disarm()
-                            print("[SYSTEM] DISARMED")
-                            return
-
-                        if system_state.is_armed():
-                            system_state.disarm()
-                            print("[SYSTEM] DISARMED")
-                            return
-
-                        if system_state.is_pending_arm():
-                            system_state.disarm()
-                            print("[SYSTEM] ARMING CANCELED")
-                            return
-
-                        print("[SYSTEM] Arming in 10 seconds...")
-                        system_state.arm_pending()
-
-                        def arm():
-                            if system_state.is_pending_arm():
-                                system_state.arm_now()
-                                print("[SYSTEM] ARMED")
-
-                        t = threading.Timer(10, arm)
-                        t.daemon = True
-                        t.start()
-
-                    else:
-                        print("[DMS] WRONG PIN")
+                    print("[DMS] Press detected - use web PIN control")
 
             run_dms(settings["DMS"], threads, stop_event, on_value=dms_handler)
-
+           
         if "GSG" in settings:
             def gsg_handler(v):
                 push(make_record(settings, "GSG", v))
@@ -394,7 +496,10 @@ if __name__ == "__main__":
 
                     handle_people_count("DUS1", system_state, settings)
 
-                    if system_state.get_people_count() == 0:
+                    if alarm_logic_enabled and system_state.get_people_count() == 0:
+                        if time.time() - last_disarm_time < DISARM_COOLDOWN:
+                            print("[ALARM BLOCKED] cooldown active")
+                            return
                         alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS1")
 
             run_dpir1(settings["DPIR1"], threads, stop_event, on_value=dpir1_handler)
@@ -406,7 +511,7 @@ if __name__ == "__main__":
                 if v.get("value") == 1:
                     handle_people_count("DUS2", system_state, settings)
 
-                    if system_state.get_people_count() == 0:
+                    if alarm_logic_enabled and system_state.get_people_count() == 0:
                         alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS2")
 
             run_dpir2(settings["DPIR2"], threads, stop_event, on_value=dpir2_handler)
@@ -418,7 +523,7 @@ if __name__ == "__main__":
                 if v.get("value") == 1:
                     print("[LOGIC] DPIR3 motion detected")
 
-                    if system_state.get_people_count() == 0:
+                    if alarm_logic_enabled and system_state.get_people_count() == 0:
                         alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DPIR3")
 
             run_dpir3(settings["DPIR3"], threads, stop_event, on_value=dpir3_handler)
@@ -537,5 +642,5 @@ if __name__ == "__main__":
         if GPIO is not None:
             try:
                 GPIO.cleanup()
-            except:
+            except Exception:
                 pass
