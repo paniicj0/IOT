@@ -20,7 +20,9 @@ def start_actuator_listener(
     stop_blink_4sd=None,
     rgb_on=None,
     rgb_off=None,
-    rgb_set_color=None
+    rgb_set_color=None,
+    on_dms_pin=None,
+    on_arm_system=None
 ):
     def log(*args):
         print(f"[{pi_label}]", *args)
@@ -44,7 +46,7 @@ def start_actuator_listener(
                     light_on()
                 elif action == "off":
                     light_off()
-                log("Door light:", action)
+                log("######## COMMAND DL:", action, "########")
                 return
 
             # ---- BUZZER ----
@@ -53,7 +55,29 @@ def start_actuator_listener(
                     buzzer_on()
                 elif action == "off":
                     buzzer_off()
-                log("Buzzer:", action)
+                log("######## COMMAND DB:", action, "########")
+                return
+
+            # ---- DMS / PIN / ARM ----
+            if device == "DMS":
+                if action == "pin":
+                    if on_dms_pin is None:
+                        log("DMS pin ignored (not configured)")
+                        return
+                    pin = str(cmd.get("pin", "")).strip()
+                    log("######## COMMAND DMS PIN RECEIVED ########")
+                    on_dms_pin(pin)
+                    return
+
+                if action == "arm":
+                    if on_arm_system is None:
+                        log("DMS arm ignored (not configured)")
+                        return
+                    log("######## COMMAND DMS ARM RECEIVED ########")
+                    on_arm_system()
+                    return
+
+                log("Unknown DMS action:", action)
                 return
 
             # ---- 4SD ----
@@ -64,7 +88,7 @@ def start_actuator_listener(
                         return
                     seconds = int(cmd.get("seconds", 0))
                     set_4sd(seconds)
-                    log("4SD set:", seconds)
+                    log("######## COMMAND 4SD SET:", seconds, "########")
                     return
 
                 if action == "add":
@@ -73,7 +97,7 @@ def start_actuator_listener(
                         return
                     seconds = int(cmd.get("seconds", 0))
                     add_4sd(seconds)
-                    log("4SD add:", seconds)
+                    log("######## COMMAND 4SD ADD:", seconds, "########")
                     return
 
                 if action == "blink":
@@ -81,7 +105,7 @@ def start_actuator_listener(
                         log("4SD blink ignored (not configured)")
                         return
                     blink_4sd()
-                    log("4SD blink ON")
+                    log("######## COMMAND 4SD BLINK ON ########")
                     return
 
                 if action == "stop_blink":
@@ -89,7 +113,7 @@ def start_actuator_listener(
                         log("4SD stop_blink ignored (not configured)")
                         return
                     stop_blink_4sd()
-                    log("4SD blink OFF")
+                    log("######## COMMAND 4SD BLINK OFF ########")
                     return
 
                 log("Unknown 4SD action:", action)
@@ -102,7 +126,7 @@ def start_actuator_listener(
                         log("BRGB on ignored (not configured)")
                         return
                     rgb_on()
-                    log("BRGB ON")
+                    log("######## COMMAND BRGB ON ########")
                     return
 
                 if action == "off":
@@ -110,7 +134,7 @@ def start_actuator_listener(
                         log("BRGB off ignored (not configured)")
                         return
                     rgb_off()
-                    log("BRGB OFF")
+                    log("######## COMMAND BRGB OFF ########")
                     return
 
                 if action == "set_color":
@@ -119,7 +143,7 @@ def start_actuator_listener(
                         return
                     color = str(cmd.get("color", "WHITE")).upper()
                     rgb_set_color(color)
-                    log("BRGB COLOR:", color)
+                    log("######## COMMAND BRGB COLOR:", color, "########")
                     return
 
                 log("Unknown BRGB action:", action)
@@ -141,7 +165,7 @@ def start_actuator_listener(
         try:
             client.loop_stop()
             client.disconnect()
-        except:
+        except Exception:
             pass
 
     t = threading.Thread(target=_stopper, daemon=True)
