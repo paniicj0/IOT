@@ -116,8 +116,21 @@ def actuators(device, action):
 @app.post("/alarm/off")
 def alarm_off():
     pin = request.args.get("pin", "1234")
-    send_cmd(PI1_TOPIC, {"device": "DMS", "action": "pin", "pin": pin})
-    return jsonify({"ok": True, "sent": {"device": "DMS", "action": "pin"}})
+    payload = {"device": "DMS", "action": "pin", "pin": pin}
+
+    send_cmd(PI1_TOPIC, payload)
+    send_cmd(PI2_TOPIC, payload)
+    send_cmd(PI3_TOPIC, payload)
+
+    return jsonify({
+        "ok": True,
+        "sent": {
+            "device": "DMS",
+            "action": "pin",
+            "pin": pin,
+            "targets": ["PI1", "PI2", "PI3"]
+        }
+    })
 
 
 @app.post("/timer/set/<int:seconds>")
@@ -164,8 +177,22 @@ def brgb_color(color):
 @app.post("/alarm/pin")
 def alarm_pin():
     pin = request.args.get("pin", "1234")
-    send_cmd(PI1_TOPIC, {"device": "DMS", "action": "pin", "pin": pin})
-    return jsonify({"ok": True, "sent": {"device": "DMS", "action": "pin", "pin": pin}})
+
+    payload = {"device": "DMS", "action": "pin", "pin": pin}
+
+    send_cmd(PI1_TOPIC, payload)
+    send_cmd(PI2_TOPIC, payload)
+    send_cmd(PI3_TOPIC, payload)
+
+    return jsonify({
+        "ok": True,
+        "sent": {
+            "device": "DMS",
+            "action": "pin",
+            "pin": pin,
+            "targets": ["PI1", "PI2", "PI3"]
+        }
+    })
 
 @app.get("/video_feed")
 def video_feed():
