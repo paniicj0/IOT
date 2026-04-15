@@ -1,6 +1,20 @@
 {
-    "DHT1": {
-        "simulated": false,
-        "pin": 17
-    } 
+  "device": { "pi_id": "PI1", "device_name": "DoorModule" },
+
+  "mqtt": {
+    "host": "localhost",
+    "port": 1883,
+    "topic_sensors": "iot/pi1/sensors",
+    "topic_actuators": "iot/pi1/actuators"
+  },
+
+  "batch": { "size": 10, "interval_sec": 5 },
+  "security": { "pin_code": "1234" },
+
+  "DS1": { "simulated": true, "pin": 5, "pull": "UP" },
+  "DPIR1": { "simulated": true, "pin": 6 },
+  "DMS": { "simulated": true, "pin": 13, "pull": "UP" },
+  "DUS1": { "simulated": true, "trigger_pin": 23, "echo_pin": 24 },
+  "DL": { "simulated": true, "pin": 18 },
+  "DB": { "simulated": true, "pin": 19 }
 }
