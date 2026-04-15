@@ -26,7 +26,8 @@ class InfluxWriter:
         if isinstance(value, bool):
             return point.field(key, value)
 
-        if key == "value" and isinstance(value, (int, float)) and not isinstance(value, bool):
+        # polja koja moraju uvek biti float
+        if key in {"value", "distance_cm", "temperature", "humidity", "magnitude"} and isinstance(value, (int, float)) and not isinstance(value, bool):
             return point.field(key, float(value))
 
         if isinstance(value, int) and not isinstance(value, bool):
@@ -44,7 +45,7 @@ class InfluxWriter:
         dt = self._parse_timestamp(rec.get("timestamp"))
 
         point = (
-            Point("sensor_data")
+            Point("sensor_data_v2")
             .tag("pi_id", str(rec.get("pi_id", "")))
             .tag("device_name", str(rec.get("device_name", "")))
             .tag("sensor", str(rec.get("sensor", "")))

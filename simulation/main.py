@@ -377,7 +377,7 @@ if __name__ == "__main__":
                 if system_state.is_pending_arm():
                     system_state.arm_now()
                     enable_alarm_logic()
-                    push_system_armed_status(settings, True)   # <- OVO FALI
+                    push_system_armed_status(settings, True)   
                     print("[SYSTEM] ARMED")
 
             t = threading.Timer(10, arm)
@@ -488,9 +488,16 @@ if __name__ == "__main__":
                 push(make_record(settings, "DPIR1", v))
 
                 if v.get("value") == 1:
+                    start_ts = time.time()
+                    print(f"[DPIR1->DL] ON at {start_ts:.3f}")
                     light_on()
 
-                    t = threading.Timer(10, light_off)
+                    def delayed_off():
+                        end_ts = time.time()
+                        print(f"[DPIR1->DL] OFF at {end_ts:.3f} (delta={end_ts - start_ts:.2f}s)")
+                        light_off()
+
+                    t = threading.Timer(10, delayed_off)
                     t.daemon = True
                     t.start()
 
