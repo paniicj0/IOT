@@ -182,7 +182,7 @@ cd IOT
 pip install RPi.GPIO paho-mqtt influxdb-client flask opencv-python
 ```
 
-> **Note:** `RPi.GPIO` is only needed when running on a Raspberry Pi. `opencv-python` is required for the camera feed on the server. For simulation-only mode on a desktop, `RPi.GPIO` can be omitted.
+> **Note:** `RPi.GPIO` is only required when running on a Raspberry Pi with physical GPIO hardware. `opencv-python` is only required on the machine running the Flask server (for the camera feed) and is not needed on Pi simulation instances. For simulation-only mode on a desktop, `RPi.GPIO` can be omitted.
 
 ### 3. Start Infrastructure (Docker)
 
