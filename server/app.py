@@ -6,6 +6,8 @@ from mqtt_listener import start_mqtt
 from influx_writer import InfluxWriter
 from mqtt_publisher import MqttCmdPublisher
 
+import cv2
+
 
 def load_config():
     with open("config.json", "r", encoding="utf-8") as f:
@@ -13,6 +15,7 @@ def load_config():
 
 
 app = Flask(__name__)
+camera = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
 cfg = load_config()
 influx = cfg["influx"]
@@ -80,6 +83,20 @@ def update_state_from_record(rec: dict):
 def send_cmd(topic: str, payload: dict):
     cmd_pub.send(topic, payload)
 
+def generate_frames():
+    while True:
+        success, frame = camera.read()
+        if not success:
+            continue
+
+        ret, buffer = cv2.imencode('.jpg', frame)
+        if not ret:
+            continue
+
+        frame_bytes = buffer.tobytes()
+
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
 @app.get("/status")
 def status():
@@ -101,11 +118,6 @@ def alarm_off():
     pin = request.args.get("pin", "1234")
     send_cmd(PI1_TOPIC, {"device": "DMS", "action": "pin", "pin": pin})
     return jsonify({"ok": True, "sent": {"device": "DMS", "action": "pin"}})
-
-@app.post("/alarm/arm")
-def alarm_arm():
-    send_cmd(PI1_TOPIC, {"device": "DMS", "action": "arm"})
-    return jsonify({"ok": True, "sent": {"device": "DMS", "action": "arm"}})
 
 
 @app.post("/timer/set/<int:seconds>")
@@ -154,6 +166,11 @@ def alarm_pin():
     pin = request.args.get("pin", "1234")
     send_cmd(PI1_TOPIC, {"device": "DMS", "action": "pin", "pin": pin})
     return jsonify({"ok": True, "sent": {"device": "DMS", "action": "pin", "pin": pin}})
+
+@app.get("/video_feed")
+def video_feed():
+    return Response(generate_frames(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.get("/control")
 def control():
@@ -367,6 +384,12 @@ def control():
           <h3>Response</h3>
           <div id="resp" class="resp-box ok">ready</div>
         </div>
+
+        <div class="card">
+          <h3>Camera</h3>
+          <img src="/video_feed" style="width:100%; border-radius:12px;" />
+        </div>
+        
       </div>
 
       <script>
@@ -385,7 +408,7 @@ def control():
 
         async function refreshStatus() {
           try {
-            const r = await fetch('/status');
+            const r = await fetch('/status', { cache: 'no-store' });
             const j = await r.json();
 
             const alarmOn = Number(j.alarm_active) === 1;
@@ -438,7 +461,7 @@ def control():
               resp.textContent = JSON.stringify(j, null, 2);
             }
 
-            setTimeout(refreshStatus, 400);
+            setTimeout(refreshStatus, 1500);
           } catch (e) {
             resp.className = 'resp-box err';
             resp.textContent = 'error: ' + e;
