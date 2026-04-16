@@ -10,6 +10,8 @@ class SystemState:
         self.system_armed = False
         self.pending_arm = False
         self.alarm_active = False
+        self.pending_entry_pin = False
+        self.entry_source = None
 
         self.people_count = 0
 
@@ -27,6 +29,8 @@ class SystemState:
             self.pending_arm = False
             self.system_armed = False
             self.alarm_active = False
+            self.pending_entry_pin = False
+            self.entry_source = None
 
     def activate_alarm(self):
         with self.lock:
@@ -67,3 +71,21 @@ class SystemState:
     def remove_person(self):
         with self.lock:
             self.people_count = max(0, self.people_count - 1)
+
+    def start_entry_delay(self, source: str):
+        with self.lock:
+            self.pending_entry_pin = True
+            self.entry_source = source
+
+    def clear_entry_delay(self):
+        with self.lock:
+            self.pending_entry_pin = False
+            self.entry_source = None
+
+    def is_entry_delay_active(self):
+        with self.lock:
+            return self.pending_entry_pin
+
+    def get_entry_source(self):
+        with self.lock:
+            return self.entry_source
