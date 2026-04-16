@@ -49,6 +49,7 @@ latest_state = {
 
 
 def update_state_from_record(rec: dict):
+    print("[SERVER RAW RECORD]", rec)
     sensor = rec.get("sensor")
     value = rec.get("value")
     pi_id = rec.get("pi_id", "")
@@ -76,8 +77,9 @@ def update_state_from_record(rec: dict):
             latest_state["brgb_color"] = str(value.get("color", "OFF"))
 
         elif sensor == "4SD" and isinstance(value, dict):
-            latest_state["timer_seconds"] = int(value.get("seconds", 0))
-            latest_state["timer_blinking"] = bool(value.get("blinking", False))
+          latest_state["timer_seconds"] = int(value.get("seconds", 0))
+          latest_state["timer_blinking"] = bool(value.get("blinking", False))
+          print("[SERVER] 4SD UPDATE =", latest_state["timer_seconds"], latest_state["timer_blinking"])
 
 
 def send_cmd(topic: str, payload: dict):
@@ -128,6 +130,21 @@ def alarm_off():
             "device": "DMS",
             "action": "pin",
             "pin": pin,
+            "targets": ["PI1", "PI2", "PI3"]
+        }
+    })
+
+@app.post("/alarm/arm")
+def alarm_arm():
+    send_cmd(PI1_TOPIC, {"device": "DMS", "action": "arm"})
+    send_cmd(PI2_TOPIC, {"device": "DMS", "action": "arm"})
+    send_cmd(PI3_TOPIC, {"device": "DMS", "action": "arm"})
+
+    return jsonify({
+        "ok": True,
+        "sent": {
+            "device": "DMS",
+            "action": "arm",
             "targets": ["PI1", "PI2", "PI3"]
         }
     })
@@ -501,8 +518,7 @@ def control():
         }
 
         function alarmArm() {
-          const pin = document.getElementById('pin').value || '1234';
-          post('/alarm/pin?pin=' + encodeURIComponent(pin));
+          post('/alarm/arm');
         }
 
         function timerSet() {

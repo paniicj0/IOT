@@ -22,7 +22,8 @@ def start_actuator_listener(
     rgb_off=None,
     rgb_set_color=None,
     on_dms_pin=None,
-    on_arm_system=None
+    on_arm_system=None,
+    on_brgb_change=None
 ):
     def log(*args):
         print(f"[{pi_label}]", *args)
@@ -126,6 +127,10 @@ def start_actuator_listener(
                         log("BRGB on ignored (not configured)")
                         return
                     rgb_on()
+
+                    if on_brgb_change is not None:
+                        on_brgb_change()
+
                     log("######## COMMAND BRGB ON ########")
                     return
 
@@ -134,6 +139,10 @@ def start_actuator_listener(
                         log("BRGB off ignored (not configured)")
                         return
                     rgb_off()
+
+                    if on_brgb_change is not None:
+                        on_brgb_change()
+
                     log("######## COMMAND BRGB OFF ########")
                     return
 
@@ -143,6 +152,10 @@ def start_actuator_listener(
                         return
                     color = str(cmd.get("color", "WHITE")).upper()
                     rgb_set_color(color)
+
+                    if on_brgb_change is not None:
+                        on_brgb_change()
+
                     log("######## COMMAND BRGB COLOR:", color, "########")
                     return
 
