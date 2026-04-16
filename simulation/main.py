@@ -117,6 +117,63 @@ last_dht_values = {
 # ---- prekidač za auto alarm logiku ----
 alarm_logic_enabled = True
 
+ENTRY_PIN_TIMEOUT = 10
+entry_delay_timers = {
+    "DS1": None,
+    "DS2": None,
+}
+
+def start_entry_delay(ds_code: str, settings, system_state, buzzer_on):
+    if system_state.is_alarm_active():
+        return
+
+    if system_state.is_entry_delay_active():
+        print(f"[ENTRY DELAY] already active via {system_state.get_entry_source()}")
+        return
+
+    print(f"[ENTRY DELAY] {ds_code} opened while ARMED -> waiting {ENTRY_PIN_TIMEOUT}s for PIN")
+    system_state.start_entry_delay(ds_code)
+
+    push(make_record(settings, "ENTRY_DELAY", {
+        "active": 1,
+        "source": ds_code,
+        "timeout_sec": ENTRY_PIN_TIMEOUT
+    }, True))
+
+    def fire():
+        if system_state.is_entry_delay_active():
+            source = system_state.get_entry_source() or ds_code
+            print(f"[ENTRY DELAY] timeout expired for {source}")
+            system_state.clear_entry_delay()
+            push(make_record(settings, "ENTRY_DELAY", {
+                "active": 0,
+                "source": source,
+                "timeout_sec": 0
+            }, True))
+            alarm_on(settings, system_state, buzzer_on, f"{source}_ARMED_TIMEOUT")
+
+    t = threading.Timer(ENTRY_PIN_TIMEOUT, fire)
+    t.daemon = True
+    t.start()
+    entry_delay_timers[ds_code] = t
+
+def cancel_entry_delay(settings, system_state, reason="PIN_OK"):
+    source = system_state.get_entry_source()
+
+    if source in entry_delay_timers and entry_delay_timers[source] is not None:
+        entry_delay_timers[source].cancel()
+        entry_delay_timers[source] = None
+
+    if system_state.is_entry_delay_active():
+        system_state.clear_entry_delay()
+        push(make_record(settings, "ENTRY_DELAY", {
+            "active": 0,
+            "source": source or "UNKNOWN",
+            "timeout_sec": 0,
+            "reason": reason
+        }, True))
+        print(f"[ENTRY DELAY] canceled ({reason})")
+
 
 def enable_alarm_logic():
     global alarm_logic_enabled
@@ -212,6 +269,27 @@ def push_brgb_state(settings, rgb_get_state):
     state = rgb_get_state()
     push(make_record(settings, "BRGB_STATE", state, simulated_override=True))
 
+def start_4sd_state_publisher(settings, stop_event, get_4sd_seconds, is_4sd_blinking):
+    def worker():
+        last_sent = None
+
+        while not stop_event.is_set():
+            current = {
+                "seconds": get_4sd_seconds(),
+                "blinking": is_4sd_blinking()
+            }
+
+            if current != last_sent:
+                print(f"[4SD STATE PUSH] {current}")
+                push(make_record(settings, "4SD", current, True))
+                last_sent = current
+
+            time.sleep(1)
+
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    return t
+
 
 if __name__ == "__main__":
 
@@ -255,8 +333,6 @@ if __name__ == "__main__":
         set_4sd = add_4sd = blink_4sd = stop_blink_4sd = None
         is_4sd_blinking = get_4sd_seconds = None
 
-
-        # ===== INIT STATE SYNC (OVDE!!!) =====
         push_alarm_status(settings, system_state.is_alarm_active(), "INIT")
         push_system_armed_status(settings, system_state.is_armed())
 
@@ -269,13 +345,6 @@ if __name__ == "__main__":
 
         if rgb_get_state is not None:
             push_brgb_state(settings, rgb_get_state)
-
-        if get_4sd_seconds is not None and is_4sd_blinking is not None:
-            push(make_record(settings, "4SD", {
-                "seconds": get_4sd_seconds(),
-                "blinking": is_4sd_blinking()
-            }, True))
-        # =====================================
 
         if "4SD" in settings:
             (
@@ -291,6 +360,14 @@ if __name__ == "__main__":
             t4 = threading.Thread(target=run_4sd_loop, args=(stop_event,), daemon=True)
             t4.start()
             threads.append(t4)
+
+            state_4sd_t = start_4sd_state_publisher(
+                settings,
+                stop_event,
+                get_4sd_seconds,
+                is_4sd_blinking
+            )
+            threads.append(state_4sd_t)
 
         lcd_write = lcd_clear = None
         if "LCD" in settings:
@@ -312,6 +389,13 @@ if __name__ == "__main__":
                 return
 
             print("[WEB/DMS] PIN OK")
+            if system_state.is_entry_delay_active():
+                cancel_entry_delay(settings, system_state, "PIN_OK")
+                system_state.disarm()
+                push_system_armed_status(settings, False)
+                last_disarm_time = time.time()
+                print("[SYSTEM] DISARMED DURING ENTRY DELAY")
+                return
 
             # 1) Ako je alarm aktivan -> ugasi alarm i disarmuj sistem
             if system_state.is_alarm_active():
@@ -374,10 +458,21 @@ if __name__ == "__main__":
             system_state.arm_pending()
 
             def arm():
+                global last_disarm_time
+
                 if system_state.is_pending_arm():
+                    if system_state.is_alarm_active():
+                        print("[SYSTEM] ARM CANCELED - alarm already active")
+                        system_state.disarm()
+                        push_system_armed_status(settings, False)
+                        return
+
                     system_state.arm_now()
                     enable_alarm_logic()
-                    push_system_armed_status(settings, True)   
+                    push_system_armed_status(settings, True)
+
+                    last_disarm_time = time.time()  # 🔥 OVO DODAJ
+
                     print("[SYSTEM] ARMED")
 
             t = threading.Timer(10, arm)
@@ -407,7 +502,8 @@ if __name__ == "__main__":
             rgb_off=rgb_off,
             rgb_set_color=rgb_set_color,
             on_dms_pin=handle_remote_pin,
-            on_arm_system=handle_arm_system
+            on_arm_system=handle_arm_system,
+            on_brgb_change=lambda: push_brgb_state(settings, rgb_get_state)
         )
         threads.append(act_t)
 
@@ -417,10 +513,13 @@ if __name__ == "__main__":
                 pressed = (v.get("value") == 1)
 
                 if pressed and system_state.is_armed():
-                    alarm_on(settings, system_state, buzzer_on, "DS1_ARMED")
+                    start_entry_delay("DS1", settings, system_state, buzzer_on)
 
                 def push_alarm_event(code):
-                    alarm_on(settings, system_state, buzzer_on, "DS1_HELD")
+                    if not system_state.is_armed() and not system_state.is_pending_arm():
+                        alarm_on(settings, system_state, buzzer_on, "DS1_HELD")
+                    else:
+                        print("[DS1_HELD] skipped because system is armed/pending")
 
                 with ds_lock:
                     st = ds_state["DS1"]
@@ -444,10 +543,13 @@ if __name__ == "__main__":
                 pressed = (v.get("value") == 1)
 
                 if pressed and system_state.is_armed():
-                    alarm_on(settings, system_state, buzzer_on, "DS2_ARMED")
+                    start_entry_delay("DS2", settings, system_state, buzzer_on)
 
                 def push_alarm_event(code):
-                    alarm_on(settings, system_state, buzzer_on, "DS2_HELD")
+                    if not system_state.is_armed() and not system_state.is_pending_arm():
+                        alarm_on(settings, system_state, buzzer_on, "DS2_HELD")
+                    else:
+                        print("[DS2_HELD] skipped because system is armed/pending")
 
                 with ds_lock:
                     st = ds_state["DS2"]
@@ -479,7 +581,10 @@ if __name__ == "__main__":
                 push(make_record(settings, "GSG", v))
                 mag = float(v.get("magnitude", v.get("value", 0)))
                 if mag >= 0.7:
-                    alarm_on(settings, system_state, buzzer_on, "GSG")
+                    if not system_state.is_armed() and not system_state.is_pending_arm():
+                        alarm_on(settings, system_state, buzzer_on, "GSG")
+                    else:
+                        print("[GSG] skipped during arm/test")
 
             run_gsg(settings["GSG"], threads, stop_event, on_value=gsg_handler)
 
@@ -503,11 +608,11 @@ if __name__ == "__main__":
 
                     handle_people_count("DUS1", system_state, settings)
 
-                    if alarm_logic_enabled and system_state.get_people_count() == 0:
-                        if time.time() - last_disarm_time < DISARM_COOLDOWN:
-                            print("[ALARM BLOCKED] cooldown active")
-                            return
-                        alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS1")
+                   # if alarm_logic_enabled and system_state.get_people_count() == 0:
+                    #    if time.time() - last_disarm_time < DISARM_COOLDOWN:
+                     #       print("[ALARM BLOCKED] cooldown active")
+                      #      return
+                       # alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS1")
 
             run_dpir1(settings["DPIR1"], threads, stop_event, on_value=dpir1_handler)
 
@@ -519,7 +624,15 @@ if __name__ == "__main__":
                     handle_people_count("DUS2", system_state, settings)
 
                     if alarm_logic_enabled and system_state.get_people_count() == 0:
-                        alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS2")
+                        if system_state.is_armed() and not system_state.is_pending_arm():
+
+                            if time.time() - last_disarm_time < DISARM_COOLDOWN:
+                                print("[EMPTY_ROOM_DUS2] blocked by cooldown")
+                                return
+
+                            alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS2")
+                        else:
+                            print("[EMPTY_ROOM_DUS2] skipped because system is not fully armed")
 
             run_dpir2(settings["DPIR2"], threads, stop_event, on_value=dpir2_handler)
 
@@ -584,19 +697,25 @@ if __name__ == "__main__":
 
             run_dht3(settings["DHT3"], threads, stop_event, on_value=dht3_handler)
 
+        # if "BTN" in settings:
+        #     def btn_handler(v):
+        #         push(make_record(settings, "BTN", v))
+
+        #         if v.get("value") == 1 and add_4sd is not None:
+        #             if is_4sd_blinking is not None and is_4sd_blinking():
+        #                 stop_blink_4sd()
+        #                 print("[BTN] Blink stopped")
+        #             else:
+        #                 add_4sd(timer_add_seconds)
+        #                 print(f"[BTN] Added {timer_add_seconds} seconds")
+
+        #     run_btn(settings["BTN"], threads, stop_event, on_value=btn_handler)
+
         if "BTN" in settings:
-            def btn_handler(v):
-                push(make_record(settings, "BTN", v))
-
-                if v.get("value") == 1 and add_4sd is not None:
-                    if is_4sd_blinking is not None and is_4sd_blinking():
-                        stop_blink_4sd()
-                        print("[BTN] Blink stopped")
-                    else:
-                        add_4sd(timer_add_seconds)
-                        print(f"[BTN] Added {timer_add_seconds} seconds")
-
-            run_btn(settings["BTN"], threads, stop_event, on_value=btn_handler)
+           def btn_handler(v):
+               push(make_record(settings, "BTN", v))
+        
+               print(f"[BTN DEBUG] value={v.get('value')} ignored during timer test")
 
         if "IR" in settings:
             def ir_handler(v):
