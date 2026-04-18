@@ -14,7 +14,7 @@ def dht3_callback(temp, hum, code, on_value=None):
 
     if on_value is not None:
         on_value({
-            "value": float(temp),   # glavna vrednost za grafanu
+            "value": float(temp),  # main value for grafana
             "temperature": float(temp),
             "humidity": float(hum),
             "code": code
@@ -36,11 +36,8 @@ def run_dht3(settings, threads, stop_event, on_value=None):
         print("DHT3 simulator started")
         return
 
-    # REAL SENSOR IMPLEMENTATION
-    try:
-        from sensors.dht import DHT, parseCheckCode
-    except Exception:
-        from simulation.sensors.dht import DHT, parseCheckCode
+    # REAL SENSOR IMPLEMENTATION (uses simulation/sensors/dht.py)
+    from sensors.dht import DHT, parseCheckCode
 
     pin = settings.get("pin")
     if pin is None:
