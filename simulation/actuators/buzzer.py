@@ -6,7 +6,9 @@ class Buzzer:
         GPIO.setup(self.pin, GPIO.OUT)
 
     def on(self):
+        GPIO.setup(self.pin, GPIO.OUT)
         GPIO.output(self.pin, GPIO.HIGH)
 
     def off(self):
+        GPIO.setup(self.pin, GPIO.OUT)
         GPIO.output(self.pin, GPIO.LOW)

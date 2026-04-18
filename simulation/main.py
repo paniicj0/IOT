@@ -581,10 +581,10 @@ if __name__ == "__main__":
                 push(make_record(settings, "GSG", v))
                 mag = float(v.get("magnitude", v.get("value", 0)))
                 if mag >= 0.7:
-                    if not system_state.is_armed() and not system_state.is_pending_arm():
-                        alarm_on(settings, system_state, buzzer_on, "GSG")
+                    if system_state.is_pending_arm():
+                        print("[GSG] skipped during pending arm")
                     else:
-                        print("[GSG] skipped during arm/test")
+                        alarm_on(settings, system_state, buzzer_on, "GSG")
 
             run_gsg(settings["GSG"], threads, stop_event, on_value=gsg_handler)
 
@@ -608,11 +608,14 @@ if __name__ == "__main__":
 
                     handle_people_count("DUS1", system_state, settings)
 
-                   # if alarm_logic_enabled and system_state.get_people_count() == 0:
-                    #    if time.time() - last_disarm_time < DISARM_COOLDOWN:
-                     #       print("[ALARM BLOCKED] cooldown active")
-                      #      return
-                       # alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS1")
+                    if alarm_logic_enabled and system_state.get_people_count() == 0:
+                        if system_state.is_armed() and not system_state.is_pending_arm():
+                            if time.time() - last_disarm_time < DISARM_COOLDOWN:
+                                print("[EMPTY_ROOM_DUS1] blocked by cooldown")
+                                return
+                            alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS1")
+                        else:
+                            print("[EMPTY_ROOM_DUS1] skipped because system is not fully armed")
 
             run_dpir1(settings["DPIR1"], threads, stop_event, on_value=dpir1_handler)
 
@@ -697,25 +700,25 @@ if __name__ == "__main__":
 
             run_dht3(settings["DHT3"], threads, stop_event, on_value=dht3_handler)
 
-        # if "BTN" in settings:
-        #     def btn_handler(v):
-        #         push(make_record(settings, "BTN", v))
-
-        #         if v.get("value") == 1 and add_4sd is not None:
-        #             if is_4sd_blinking is not None and is_4sd_blinking():
-        #                 stop_blink_4sd()
-        #                 print("[BTN] Blink stopped")
-        #             else:
-        #                 add_4sd(timer_add_seconds)
-        #                 print(f"[BTN] Added {timer_add_seconds} seconds")
-
-        #     run_btn(settings["BTN"], threads, stop_event, on_value=btn_handler)
-
         if "BTN" in settings:
-           def btn_handler(v):
-               push(make_record(settings, "BTN", v))
+            def btn_handler(v):
+                push(make_record(settings, "BTN", v))
+
+                if v.get("value") == 1 and add_4sd is not None:
+                    if is_4sd_blinking is not None and is_4sd_blinking():
+                        stop_blink_4sd()
+                        print("[BTN] Blink stopped")
+                    else:
+                        add_4sd(timer_add_seconds)
+                        print(f"[BTN] Added {timer_add_seconds} seconds")
+
+            run_btn(settings["BTN"], threads, stop_event, on_value=btn_handler)
+
+        # if "BTN" in settings:
+        #    def btn_handler(v):
+        #        push(make_record(settings, "BTN", v))
         
-               print(f"[BTN DEBUG] value={v.get('value')} ignored during timer test")
+        #        print(f"[BTN DEBUG] value={v.get('value')} ignored during timer test")
 
         if "IR" in settings:
             def ir_handler(v):
