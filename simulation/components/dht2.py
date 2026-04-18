@@ -37,13 +37,8 @@ def run_dht2(settings, threads, stop_event, on_value=None):
         print("DHT2 simulator started")
         return
 
-    # REAL SENSOR IMPLEMENTATION
-    # Uses the existing DHT driver in simulation/sensors/dht.py
-    try:
-        from sensors.dht import DHT, parseCheckCode
-    except Exception:
-        # fallback in case imports are run with a different working directory/module path
-        from simulation.sensors.dht import DHT, parseCheckCode
+    # REAL SENSOR IMPLEMENTATION (uses simulation/sensors/dht.py)
+    from sensors.dht import DHT, parseCheckCode
 
     pin = settings.get("pin")
     if pin is None:
@@ -57,18 +52,16 @@ def run_dht2(settings, threads, stop_event, on_value=None):
             check = dht.readDHT11()
             code = parseCheckCode(check)
 
-            # In this project driver: dht.temperature and dht.humidity are updated by readDHT11()
+            # Driver updates these on readDHT11()
             hum = float(dht.humidity)
             temp = float(dht.temperature)
 
-            # Optional: skip invalid readings (driver uses -999 for invalid)
+            # Skip invalid readings (driver uses -999 for invalid)
             if hum == -999 or temp == -999:
-                # still print something if you want; for now just continue
                 time.sleep(delay)
                 continue
 
             dht2_callback(temp, hum, code, on_value)
-
             time.sleep(delay)
 
         print("DHT2 real sensor stopped")
