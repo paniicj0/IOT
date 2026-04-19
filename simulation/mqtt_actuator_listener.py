@@ -23,7 +23,9 @@ def start_actuator_listener(
     rgb_set_color=None,
     on_dms_pin=None,
     on_arm_system=None,
-    on_brgb_change=None
+    on_brgb_change=None,
+    on_test_config=None,
+    on_test_trigger=None
 ):
     def log(*args):
         print(f"[{pi_label}]", *args)
@@ -40,6 +42,31 @@ def start_actuator_listener(
 
             device = cmd.get("device")
             action = cmd.get("action")
+
+            # ---- TEST CONFIG ----
+            if device == "TEST_CONFIG":
+                if action == "set":
+                    if on_test_config is None:
+                        log("TEST_CONFIG ignored (not configured)")
+                        return
+
+                    config = cmd.get("config", {})
+                    log("######## COMMAND TEST_CONFIG SET ########", config)
+                    on_test_config(config)
+                    return
+
+                log("Unknown TEST_CONFIG action:", action)
+                return
+
+            # ---- TEST TRIGGER ----
+            if device == "TEST_TRIGGER":
+                if on_test_trigger is None:
+                    log("TEST_TRIGGER ignored (not configured)")
+                    return
+
+                log("######## COMMAND TEST_TRIGGER:", action, "########")
+                on_test_trigger(action)
+                return
 
             # ---- DOOR LIGHT ----
             if device == "DL":

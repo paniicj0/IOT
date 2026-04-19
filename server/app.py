@@ -47,6 +47,15 @@ latest_state = {
     "sensors": {}
 }
 
+test_config_lock = threading.Lock()
+test_config = {
+    "manual_mode": False,
+    "disable_alarm_logic": False,
+    "allow_gsg_alarm": True,
+    "allow_ds_hold_alarm": True,
+    "allow_empty_room_alarm": True
+}
+
 
 def update_state_from_record(rec: dict):
     print("[SERVER RAW RECORD]", rec)
@@ -147,6 +156,70 @@ def alarm_arm():
             "action": "arm",
             "targets": ["PI1", "PI2", "PI3"]
         }
+    })
+
+
+@app.get("/test-config")
+def get_test_config():
+    with test_config_lock:
+        return jsonify(test_config)
+
+
+@app.post("/test-config")
+def set_test_config():
+    global test_config
+
+    data = request.get_json(force=True) or {}
+
+    with test_config_lock:
+        test_config["manual_mode"] = bool(data.get("manual_mode", False))
+        test_config["disable_alarm_logic"] = bool(data.get("disable_alarm_logic", False))
+        test_config["allow_gsg_alarm"] = bool(data.get("allow_gsg_alarm", True))
+        test_config["allow_ds_hold_alarm"] = bool(data.get("allow_ds_hold_alarm", True))
+        test_config["allow_empty_room_alarm"] = bool(data.get("allow_empty_room_alarm", True))
+
+        current_config = dict(test_config)
+
+    payload = {
+        "device": "TEST_CONFIG",
+        "action": "set",
+        "config": current_config
+    }
+
+    send_cmd(PI1_TOPIC, payload)
+    send_cmd(PI2_TOPIC, payload)
+    send_cmd(PI3_TOPIC, payload)
+
+    return jsonify({
+        "ok": True,
+        "config": current_config,
+        "sent_to": ["PI1", "PI2", "PI3"]
+    })
+
+
+@app.post("/test-trigger/<name>")
+def test_trigger(name):
+    allowed = {
+        "gsg": {"device": "TEST_TRIGGER", "action": "gsg"},
+        "ds1_held": {"device": "TEST_TRIGGER", "action": "ds1_held"},
+        "ds2_held": {"device": "TEST_TRIGGER", "action": "ds2_held"},
+        "dpir1": {"device": "TEST_TRIGGER", "action": "dpir1"},
+        "reset": {"device": "TEST_TRIGGER", "action": "reset"}
+    }
+
+    if name not in allowed:
+        return jsonify({"ok": False, "error": "bad trigger"}), 400
+
+    payload = allowed[name]
+
+    send_cmd(PI1_TOPIC, payload)
+    send_cmd(PI2_TOPIC, payload)
+    send_cmd(PI3_TOPIC, payload)
+
+    return jsonify({
+        "ok": True,
+        "sent": payload,
+        "targets": ["PI1", "PI2", "PI3"]
     })
 
 
@@ -401,6 +474,49 @@ def control():
         </div>
 
         <div class="card">
+          <h3>Test mode</h3>
+          <div class="muted">Kontrola simulacije za odbranu</div>
+
+          <div class="row">
+            <label><input type="checkbox" id="manualMode"> Manual test mode</label>
+          </div>
+
+          <div class="row">
+            <label><input type="checkbox" id="disableAlarmLogic"> Disable auto alarm logic</label>
+          </div>
+
+          <div class="row">
+            <label><input type="checkbox" id="allowGsgAlarm" checked> Enable GSG alarm</label>
+          </div>
+
+          <div class="row">
+            <label><input type="checkbox" id="allowDsHoldAlarm" checked> Enable DS hold alarm</label>
+          </div>
+
+          <div class="row">
+            <label><input type="checkbox" id="allowEmptyRoomAlarm" checked> Enable empty room alarm</label>
+          </div>
+
+          <div class="row">
+            <button onclick="applyTestConfig()">Apply Test Config</button>
+          </div>
+
+          <div class="row">
+            <button onclick="post('/test-trigger/gsg')">Trigger GSG</button>
+            <button onclick="post('/test-trigger/ds1_held')">Trigger DS1 held</button>
+          </div>
+
+          <div class="row">
+            <button onclick="post('/test-trigger/ds2_held')">Trigger DS2 held</button>
+            <button onclick="post('/test-trigger/dpir1')">Trigger DPIR1</button>
+          </div>
+
+          <div class="row">
+            <button onclick="post('/test-trigger/reset')">Reset test state</button>
+          </div>
+        </div>
+
+        <div class="card">
           <h3>PI2 - Timer</h3>
           <div class="muted">Set početnog vremena</div>
           <input id="timerSet" type="number" value="120" min="0"/>
@@ -433,6 +549,36 @@ def control():
           <h3>Camera</h3>
           <img src="/video_feed" style="width:100%; border-radius:12px;" />
         </div>
+
+        <div class="card">
+          <div style="border-radius: 12px; overflow: hidden;">
+            <iframe src="http://localhost:3000/d-solo/ad5frfd/vizualization?orgId=1&from=1776596248743&to=1776597148743&timezone=browser&panelId=panel-1&__feature.dashboardSceneSolo=true" width="450" height="200" frameborder="0"></iframe>
+            <iframe src="http://localhost:3000/d-solo/ad5scfs/door-sensors?orgId=1&from=1776510654448&to=1776597054448&timezone=browser&panelId=panel-1&__feature.dashboardSceneSolo=true" width="450" height="200" frameborder="0"></iframe>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="border-radius: 12px; overflow: hidden;">
+            <iframe src="http://localhost:3000/d-solo/adc727n/alarm?orgId=1&from=1776597663817&to=1776598563817&timezone=browser&panelId=panel-1&__feature.dashboardSceneSolo=true" width="450" height="200" frameborder="0"></iframe>
+            <iframe src="http://localhost:3000/d-solo/adh4t49/alarm-over-time?orgId=1&from=1776576986940&to=1776598586940&timezone=browser&panelId=panel-1&__feature.dashboardSceneSolo=true" width="450" height="200" frameborder="0"></iframe>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="border-radius: 12px; overflow: hidden;">
+            <iframe src="http://localhost:3000/d-solo/adgtm47/temperature?orgId=1&from=1776577216991&to=1776598816991&timezone=browser&panelId=panel-1&__feature.dashboardSceneSolo=true" width="450" height="200" frameborder="0"></iframe>
+            <iframe src="http://localhost:3000/d-solo/adjjwf5/people-count?orgId=1&from=1776597965239&to=1776598865239&timezone=browser&panelId=panel-1&__feature.dashboardSceneSolo=true" width="450" height="200" frameborder="0"></iframe>
+          </div>
+        </div>
+
+        <div class="card">
+          <div style="border-radius: 12px; overflow: hidden;">
+            <iframe src="http://localhost:3000/d-solo/addhzfc/motion-dpir?orgId=1&from=1776588093174&to=1776598893174&timezone=browser&panelId=panel-1&__feature.dashboardSceneSolo=true" width="450" height="200" frameborder="0"></iframe>
+          </div>
+        </div>
+
+
+        
         
       </div>
 
@@ -449,6 +595,58 @@ def control():
             default: return 'pill pill-gray';
           }
         }
+
+        async function loadTestConfig() {
+          try {
+            const r = await fetch('/test-config', { cache: 'no-store' });
+            const j = await r.json();
+
+            document.getElementById('manualMode').checked = !!j.manual_mode;
+            document.getElementById('disableAlarmLogic').checked = !!j.disable_alarm_logic;
+            document.getElementById('allowGsgAlarm').checked = !!j.allow_gsg_alarm;
+            document.getElementById('allowDsHoldAlarm').checked = !!j.allow_ds_hold_alarm;
+            document.getElementById('allowEmptyRoomAlarm').checked = !!j.allow_empty_room_alarm;
+          } catch (e) {
+            console.log('test config load error', e);
+          }
+        }
+
+        async function applyTestConfig() {
+          const resp = document.getElementById('resp');
+          resp.className = 'resp-box ok';
+          resp.textContent = 'sending test config...';
+
+          const body = {
+            manual_mode: document.getElementById('manualMode').checked,
+            disable_alarm_logic: document.getElementById('disableAlarmLogic').checked,
+            allow_gsg_alarm: document.getElementById('allowGsgAlarm').checked,
+            allow_ds_hold_alarm: document.getElementById('allowDsHoldAlarm').checked,
+            allow_empty_room_alarm: document.getElementById('allowEmptyRoomAlarm').checked
+          };
+
+          try {
+            const r = await fetch('/test-config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(body)
+            });
+
+            const j = await r.json();
+
+            if (!r.ok) {
+              resp.className = 'resp-box err';
+              resp.textContent = JSON.stringify(j, null, 2);
+            } else {
+              resp.className = 'resp-box ok';
+              resp.textContent = JSON.stringify(j, null, 2);
+            }
+
+              setTimeout(refreshStatus, 800);
+            } catch (e) {
+              resp.className = 'resp-box err';
+              resp.textContent = 'error: ' + e;
+            }
+          }
 
         async function refreshStatus() {
           try {
@@ -531,6 +729,7 @@ def control():
           post('/timer/add/' + s);
         }
 
+        loadTestConfig();
         refreshStatus();
         setInterval(refreshStatus, 2000);
       </script>
