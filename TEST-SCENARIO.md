@@ -352,11 +352,3 @@ Recommended “smooth show” order:
 - **State hygiene:** Always reset between scenarios that affect `armed`, `alarm`, or `people_count`.
 
 ---
-
-## Notes / Space for Test Evidence
-
-Use this section to paste artifacts from real runs:
-
-- Screenshot(s) of `/control`
-- Terminal log excerpts (timestamps)
-- Grafana panel screenshot(s) showing the alarm event
