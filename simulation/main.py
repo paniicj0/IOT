@@ -73,6 +73,7 @@ def push_alarm_status(settings, active: bool, reason: str):
         "reason": reason
     }, True))
 
+
 def push_system_armed_status(settings, armed: bool):
     push(make_record(settings, "SYSTEM_ARMED", {
         "armed": 1 if armed else 0
@@ -114,14 +115,23 @@ last_dht_values = {
     "DHT3": None,
 }
 
-# ---- prekidač za auto alarm logiku ----
 alarm_logic_enabled = True
+
+test_mode_lock = threading.Lock()
+test_mode = {
+    "manual_mode": False,
+    "disable_alarm_logic": False,
+    "allow_gsg_alarm": True,
+    "allow_ds_hold_alarm": True,
+    "allow_empty_room_alarm": True
+}
 
 ENTRY_PIN_TIMEOUT = 10
 entry_delay_timers = {
     "DS1": None,
     "DS2": None,
 }
+
 
 def start_entry_delay(ds_code: str, settings, system_state, buzzer_on):
     if system_state.is_alarm_active():
@@ -157,6 +167,7 @@ def start_entry_delay(ds_code: str, settings, system_state, buzzer_on):
     t.start()
     entry_delay_timers[ds_code] = t
 
+
 def cancel_entry_delay(settings, system_state, reason="PIN_OK"):
     source = system_state.get_entry_source()
 
@@ -185,6 +196,42 @@ def disable_alarm_logic():
     global alarm_logic_enabled
     alarm_logic_enabled = False
     print("[ALARM LOGIC] DISABLED")
+
+
+def update_test_mode(config: dict):
+    with test_mode_lock:
+        test_mode["manual_mode"] = bool(config.get("manual_mode", False))
+        test_mode["disable_alarm_logic"] = bool(config.get("disable_alarm_logic", False))
+        test_mode["allow_gsg_alarm"] = bool(config.get("allow_gsg_alarm", True))
+        test_mode["allow_ds_hold_alarm"] = bool(config.get("allow_ds_hold_alarm", True))
+        test_mode["allow_empty_room_alarm"] = bool(config.get("allow_empty_room_alarm", True))
+
+    if test_mode["disable_alarm_logic"]:
+        disable_alarm_logic()
+    else:
+        enable_alarm_logic()
+
+    print("[TEST MODE UPDATED]", test_mode)
+
+
+def can_trigger_gsg_alarm():
+    with test_mode_lock:
+        return test_mode["allow_gsg_alarm"]
+
+
+def can_trigger_ds_hold_alarm():
+    with test_mode_lock:
+        return test_mode["allow_ds_hold_alarm"]
+
+
+def can_trigger_empty_room_alarm():
+    with test_mode_lock:
+        return test_mode["allow_empty_room_alarm"]
+
+
+def is_manual_mode():
+    with test_mode_lock:
+        return test_mode["manual_mode"]
 
 
 def _start_ds_hold_timer(ds_code: str, stop_event, push_event_fn):
@@ -269,6 +316,7 @@ def push_brgb_state(settings, rgb_get_state):
     state = rgb_get_state()
     push(make_record(settings, "BRGB_STATE", state, simulated_override=True))
 
+
 def start_4sd_state_publisher(settings, stop_event, get_4sd_seconds, is_4sd_blinking):
     def worker():
         last_sent = None
@@ -289,6 +337,84 @@ def start_4sd_state_publisher(settings, stop_event, get_4sd_seconds, is_4sd_blin
     t = threading.Thread(target=worker, daemon=True)
     t.start()
     return t
+
+
+def reset_test_state(settings, system_state, buzzer_off, light_off, stop_blink_4sd=None, rgb_off=None):
+    global last_disarm_time
+
+    cancel_entry_delay(settings, system_state, "MANUAL_RESET")
+
+    if system_state.is_alarm_active():
+        alarm_off(settings, system_state, buzzer_off, "MANUAL_RESET")
+
+    if system_state.is_armed() or system_state.is_pending_arm():
+        system_state.disarm()
+        push_system_armed_status(settings, False)
+
+    try:
+        light_off()
+    except Exception:
+        pass
+
+    try:
+        buzzer_off()
+    except Exception:
+        pass
+
+    if stop_blink_4sd is not None:
+        try:
+            stop_blink_4sd()
+        except Exception:
+            pass
+
+    if rgb_off is not None:
+        try:
+            rgb_off()
+        except Exception:
+            pass
+
+    last_disarm_time = time.time()
+    print("[TEST] State reset done")
+
+
+def trigger_manual_gsg(settings, system_state, buzzer_on):
+    if not can_trigger_gsg_alarm():
+        print("[TEST] GSG trigger blocked by config")
+        return
+    alarm_on(settings, system_state, buzzer_on, "GSG_MANUAL")
+
+
+def trigger_manual_ds1_held(settings, system_state, buzzer_on):
+    if not can_trigger_ds_hold_alarm():
+        print("[TEST] DS1 held trigger blocked by config")
+        return
+    alarm_on(settings, system_state, buzzer_on, "DS1_HELD_MANUAL")
+
+
+def trigger_manual_ds2_held(settings, system_state, buzzer_on):
+    if not can_trigger_ds_hold_alarm():
+        print("[TEST] DS2 held trigger blocked by config")
+        return
+    alarm_on(settings, system_state, buzzer_on, "DS2_HELD_MANUAL")
+
+
+def trigger_manual_dpir1(settings, system_state, light_on, light_off, buzzer_on):
+    start_ts = time.time()
+    print(f"[TEST][DPIR1] manual ON at {start_ts:.3f}")
+    light_on()
+
+    def delayed_off():
+        end_ts = time.time()
+        print(f"[TEST][DPIR1] manual OFF at {end_ts:.3f} (delta={end_ts - start_ts:.2f}s)")
+        light_off()
+
+    t = threading.Timer(10, delayed_off)
+    t.daemon = True
+    t.start()
+
+    if can_trigger_empty_room_alarm() and system_state.get_people_count() == 0:
+        if system_state.is_armed() and not system_state.is_pending_arm():
+            alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS1_MANUAL")
 
 
 if __name__ == "__main__":
@@ -319,7 +445,6 @@ if __name__ == "__main__":
         rgb_on = rgb_off = rgb_set_color = lambda *args, **kwargs: None
         rgb_get_state = None
 
-            # ----- AKTUATORI -----
         if "DL" in settings:
             light_on, light_off = create_door_light(settings["DL"])
 
@@ -329,7 +454,6 @@ if __name__ == "__main__":
         if "BRGB" in settings:
             rgb_on, rgb_off, rgb_set_color, rgb_get_state = create_brgb(settings["BRGB"])
 
-        # ----- 4SD INIT -----
         set_4sd = add_4sd = blink_4sd = stop_blink_4sd = None
         is_4sd_blinking = get_4sd_seconds = None
 
@@ -397,7 +521,6 @@ if __name__ == "__main__":
                 print("[SYSTEM] DISARMED DURING ENTRY DELAY")
                 return
 
-            # 1) Ako je alarm aktivan -> ugasi alarm i disarmuj sistem
             if system_state.is_alarm_active():
                 alarm_off(settings, system_state, buzzer_off, "PIN_OK")
                 system_state.disarm()
@@ -407,7 +530,6 @@ if __name__ == "__main__":
                 print("[COOLDOWN] Alarm disabled for 10s")
                 return
 
-            # 2) Ako je sistem vec armed -> disarm
             if system_state.is_armed():
                 system_state.disarm()
                 push_system_armed_status(settings, False)
@@ -415,14 +537,12 @@ if __name__ == "__main__":
                 print("[SYSTEM] DISARMED")
                 return
 
-            # 3) Ako je armiranje u toku -> otkazi
             if system_state.is_pending_arm():
                 system_state.disarm()
                 push_system_armed_status(settings, False)
                 print("[SYSTEM] ARMING CANCELED")
                 return
 
-            # 4) Inace pokreni armiranje za 10 sekundi
             print("[SYSTEM] Arming in 10 seconds...")
             system_state.arm_pending()
 
@@ -470,19 +590,48 @@ if __name__ == "__main__":
                     system_state.arm_now()
                     enable_alarm_logic()
                     push_system_armed_status(settings, True)
-
-                    last_disarm_time = time.time()  # 🔥 OVO DODAJ
-
+                    last_disarm_time = time.time()
                     print("[SYSTEM] ARMED")
 
             t = threading.Timer(10, arm)
             t.daemon = True
             t.start()
 
-
-
         def handle_manual_alarm():
             alarm_on(settings, system_state, buzzer_on, "MANUAL_WEB")
+
+        def handle_test_config(cfg: dict):
+            update_test_mode(cfg)
+
+        def handle_test_trigger(action: str):
+            if action == "gsg":
+                trigger_manual_gsg(settings, system_state, buzzer_on)
+                return
+
+            if action == "ds1_held":
+                trigger_manual_ds1_held(settings, system_state, buzzer_on)
+                return
+
+            if action == "ds2_held":
+                trigger_manual_ds2_held(settings, system_state, buzzer_on)
+                return
+
+            if action == "dpir1":
+                trigger_manual_dpir1(settings, system_state, light_on, light_off, buzzer_on)
+                return
+
+            if action == "reset":
+                reset_test_state(
+                    settings,
+                    system_state,
+                    buzzer_off,
+                    light_off,
+                    stop_blink_4sd=stop_blink_4sd,
+                    rgb_off=rgb_off
+                )
+                return
+
+            print(f"[TEST] Unknown trigger action: {action}")
 
         act_t = start_actuator_listener(
             settings["mqtt"]["host"],
@@ -503,7 +652,9 @@ if __name__ == "__main__":
             rgb_set_color=rgb_set_color,
             on_dms_pin=handle_remote_pin,
             on_arm_system=handle_arm_system,
-            on_brgb_change=lambda: push_brgb_state(settings, rgb_get_state)
+            on_brgb_change=lambda: push_brgb_state(settings, rgb_get_state),
+            on_test_config=handle_test_config,
+            on_test_trigger=handle_test_trigger
         )
         threads.append(act_t)
 
@@ -516,6 +667,10 @@ if __name__ == "__main__":
                     start_entry_delay("DS1", settings, system_state, buzzer_on)
 
                 def push_alarm_event(code):
+                    if not can_trigger_ds_hold_alarm():
+                        print("[DS1_HELD] blocked by test config")
+                        return
+
                     if not system_state.is_armed() and not system_state.is_pending_arm():
                         alarm_on(settings, system_state, buzzer_on, "DS1_HELD")
                     else:
@@ -546,6 +701,10 @@ if __name__ == "__main__":
                     start_entry_delay("DS2", settings, system_state, buzzer_on)
 
                 def push_alarm_event(code):
+                    if not can_trigger_ds_hold_alarm():
+                        print("[DS2_HELD] blocked by test config")
+                        return
+
                     if not system_state.is_armed() and not system_state.is_pending_arm():
                         alarm_on(settings, system_state, buzzer_on, "DS2_HELD")
                     else:
@@ -575,16 +734,21 @@ if __name__ == "__main__":
                     print("[DMS] Press detected - use web PIN control")
 
             run_dms(settings["DMS"], threads, stop_event, on_value=dms_handler)
-           
+
         if "GSG" in settings:
             def gsg_handler(v):
                 push(make_record(settings, "GSG", v))
                 mag = float(v.get("magnitude", v.get("value", 0)))
+
                 if mag >= 0.7:
-                    if not system_state.is_armed() and not system_state.is_pending_arm():
-                        alarm_on(settings, system_state, buzzer_on, "GSG")
+                    if not can_trigger_gsg_alarm():
+                        print("[GSG] blocked by test config")
+                        return
+
+                    if system_state.is_pending_arm():
+                        print("[GSG] skipped during pending arm")
                     else:
-                        print("[GSG] skipped during arm/test")
+                        alarm_on(settings, system_state, buzzer_on, "GSG")
 
             run_gsg(settings["GSG"], threads, stop_event, on_value=gsg_handler)
 
@@ -608,11 +772,18 @@ if __name__ == "__main__":
 
                     handle_people_count("DUS1", system_state, settings)
 
-                   # if alarm_logic_enabled and system_state.get_people_count() == 0:
-                    #    if time.time() - last_disarm_time < DISARM_COOLDOWN:
-                     #       print("[ALARM BLOCKED] cooldown active")
-                      #      return
-                       # alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS1")
+                    if alarm_logic_enabled and system_state.get_people_count() == 0:
+                        if not can_trigger_empty_room_alarm():
+                            print("[EMPTY_ROOM_DUS1] blocked by test config")
+                            return
+
+                        if system_state.is_armed() and not system_state.is_pending_arm():
+                            if time.time() - last_disarm_time < DISARM_COOLDOWN:
+                                print("[EMPTY_ROOM_DUS1] blocked by cooldown")
+                                return
+                            alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DUS1")
+                        else:
+                            print("[EMPTY_ROOM_DUS1] skipped because system is not fully armed")
 
             run_dpir1(settings["DPIR1"], threads, stop_event, on_value=dpir1_handler)
 
@@ -624,8 +795,11 @@ if __name__ == "__main__":
                     handle_people_count("DUS2", system_state, settings)
 
                     if alarm_logic_enabled and system_state.get_people_count() == 0:
-                        if system_state.is_armed() and not system_state.is_pending_arm():
+                        if not can_trigger_empty_room_alarm():
+                            print("[EMPTY_ROOM_DUS2] blocked by test config")
+                            return
 
+                        if system_state.is_armed() and not system_state.is_pending_arm():
                             if time.time() - last_disarm_time < DISARM_COOLDOWN:
                                 print("[EMPTY_ROOM_DUS2] blocked by cooldown")
                                 return
@@ -644,6 +818,10 @@ if __name__ == "__main__":
                     print("[LOGIC] DPIR3 motion detected")
 
                     if alarm_logic_enabled and system_state.get_people_count() == 0:
+                        if not can_trigger_empty_room_alarm():
+                            print("[EMPTY_ROOM_DPIR3] blocked by test config")
+                            return
+
                         alarm_on(settings, system_state, buzzer_on, "EMPTY_ROOM_DPIR3")
 
             run_dpir3(settings["DPIR3"], threads, stop_event, on_value=dpir3_handler)
@@ -697,25 +875,19 @@ if __name__ == "__main__":
 
             run_dht3(settings["DHT3"], threads, stop_event, on_value=dht3_handler)
 
-        # if "BTN" in settings:
-        #     def btn_handler(v):
-        #         push(make_record(settings, "BTN", v))
-
-        #         if v.get("value") == 1 and add_4sd is not None:
-        #             if is_4sd_blinking is not None and is_4sd_blinking():
-        #                 stop_blink_4sd()
-        #                 print("[BTN] Blink stopped")
-        #             else:
-        #                 add_4sd(timer_add_seconds)
-        #                 print(f"[BTN] Added {timer_add_seconds} seconds")
-
-        #     run_btn(settings["BTN"], threads, stop_event, on_value=btn_handler)
-
         if "BTN" in settings:
-           def btn_handler(v):
-               push(make_record(settings, "BTN", v))
-        
-               print(f"[BTN DEBUG] value={v.get('value')} ignored during timer test")
+            def btn_handler(v):
+                push(make_record(settings, "BTN", v))
+
+                if v.get("value") == 1 and add_4sd is not None:
+                    if is_4sd_blinking is not None and is_4sd_blinking():
+                        stop_blink_4sd()
+                        print("[BTN] Blink stopped")
+                    else:
+                        add_4sd(timer_add_seconds)
+                        print(f"[BTN] Added {timer_add_seconds} seconds")
+
+            run_btn(settings["BTN"], threads, stop_event, on_value=btn_handler)
 
         if "IR" in settings:
             def ir_handler(v):
